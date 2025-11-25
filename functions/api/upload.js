@@ -242,91 +242,40 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 60000, label = 'r
 }
 
 // 针对 Telegram 请求的重试封装（指数退避）
-// async function postToTelegram(url, formData, label, timeoutMs = 60000, retries = 2) {
-//     let attempt = 0;
-//     let delay = 600; // 首次退避 600ms
-//     while (true) {
-//         try {
-//             const resp = await fetchWithTimeout(url, { method: 'POST', body: formData }, timeoutMs, label);
-//             const data = await resp.json();
-//             if (resp.ok) return data;
-//             // 仅对 5xx/429 进行重试
-//             if (attempt < retries && (resp.status >= 500 || resp.status === 429)) {
-//                 console.warn(`[retry] ${label} 响应 ${resp.status}，${delay}ms 后重试（第 ${attempt + 1} 次）`);
-//                 await new Promise(r => setTimeout(r, delay));
-//                 attempt += 1;
-//                 delay *= 2;
-//                 continue;
-//             }
-//             console.error('Error response from Telegram API:', data);
-//             throw new Error(data.description || 'Upload to Telegram failed');
-//         } catch (err) {
-//             // 对超时/网络错误重试
-//             const msg = String(err && err.message ? err.message : err);
-//             if (attempt < retries && (msg.includes('超时') || msg.includes('network') || msg.includes('aborted'))) {
-//                 console.warn(`[retry] ${label} ${msg}，${delay}ms 后重试（第 ${attempt + 1} 次）`);
-//                 await new Promise(r => setTimeout(r, delay));
-//                 attempt += 1;
-//                 delay *= 2;
-//                 continue;
-//             }
-//             throw err;
-//         }
-//     }
-// }
-
-async function postToTelegram(
-  url, formData, label, 
-  timeoutMs = 80000, 
-  retries = 2, 
-  totalTimeoutMs = 8 * 60 * 1000   // 默认最多8分钟
-) {
-  const startTime = Date.now();
-
-  let attempt = 0;
-  let delay = 8000;
-
-  while (true) {
-    // 检查总超时
-    if (Date.now() - startTime > totalTimeoutMs) {
-      throw new Error(`${label} 总操作超时（超过 ${totalTimeoutMs/1000}s），已放弃`);
+async function postToTelegram(url, formData, label, timeoutMs = 60000, retries = 2) {
+    let attempt = 0;
+    let delay = 600; // 首次退避 600ms
+    while (true) {
+        try {
+            const resp = await fetchWithTimeout(url, { method: 'POST', body: formData }, timeoutMs, label);
+            const data = await resp.json();
+            if (resp.ok) return data;
+            // 仅对 5xx/429 进行重试
+            if (attempt < retries && (resp.status >= 500 || resp.status === 429)) {
+                console.warn(`[retry] ${label} 响应 ${resp.status}，${delay}ms 后重试（第 ${attempt + 1} 次）`);
+                await new Promise(r => setTimeout(r, delay));
+                attempt += 1;
+                delay *= 2;
+                continue;
+            }
+            console.error('Error response from Telegram API:', data);
+            throw new Error(data.description || 'Upload to Telegram failed');
+        } catch (err) {
+            // 对超时/网络错误重试
+            const msg = String(err && err.message ? err.message : err);
+            if (attempt < retries && (msg.includes('超时') || msg.includes('network') || msg.includes('aborted'))) {
+                console.warn(`[retry] ${label} ${msg}，${delay}ms 后重试（第 ${attempt + 1} 次）`);
+                await new Promise(r => setTimeout(r, delay));
+                attempt += 1;
+                delay *= 2;
+                continue;
+            }
+            throw err;
+        }
     }
-
-    try {
-      const resp = await fetchWithTimeout(url, { method: 'POST', body: formData }, timeoutMs, label);
-      const data = await resp.json();
-
-      if (resp.ok) return data;
-
-      if (attempt < retries && (resp.status >= 500 || resp.status === 429)) {
-        console.warn(`[retry] ${label} 响应 ${resp.status}，${delay}ms 后重试（第 ${attempt + 1}/${retries}）`);
-        await sleep(delay);
-        attempt++;
-        delay *= 2;
-        continue;
-      }
-
-      throw new Error(data.description || 'Telegram API error');
-
-    } catch (err) {
-      const msg = err?.message || String(err);
-
-      if (attempt < retries && /超时|network|aborted/i.test(msg)) {
-        console.warn(`[retry] ${label} ${msg}，${delay}ms 后重试（第 ${attempt + 1}/${retries}）`);
-        await sleep(delay);
-        attempt++;
-        delay *= 2;
-        continue;
-      }
-      throw err;
-    }
-  }
 }
 
-// 辅助函数
-function sleep(ms) {
-  return new Promise(r => setTimeout(r, ms));
-}
+
 
 
 
