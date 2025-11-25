@@ -244,7 +244,7 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 60000, label = 'r
 // 针对 Telegram 请求的重试封装（指数退避）
 async function postToTelegram(url, formData, label, timeoutMs = 60000, retries = 2) {
     let attempt = 0;
-    let delay = 600; // 首次退避 600ms
+    let delay = 6000; // 首次退避 600ms
     while (true) {
         try {
             const resp = await fetchWithTimeout(url, { method: 'POST', body: formData }, timeoutMs, label);
