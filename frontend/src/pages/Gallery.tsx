@@ -79,6 +79,27 @@ export default function Gallery() {
     setToast({ message: "已复制链接", type: "success" });
   };
 
+  const handleClearData = async () => {
+    if (window.confirm("确定要清除所有数据吗？此操作不可恢复。")) {
+      try {
+        const res = await fetch("/api/clear-data", {
+          method: "POST",
+          credentials: "include",
+        });
+        if (res.ok) {
+          setItems([]);
+          setCursor("");
+          setHasMore(false);
+          setToast({ message: "所有数据已清除", type: "success" });
+        } else {
+          throw new Error("清除数据失败");
+        }
+      } catch (err: any) {
+        setToast({ message: err?.message || "清除数据失败", type: "error" });
+      }
+    }
+  };
+
   return (
     <div className="min-h-svh bg-gray-50 text-gray-900">
       {toast && (
@@ -122,6 +143,42 @@ export default function Gallery() {
               ></path>
             </svg>
           </Link>
+          <button
+            onClick={handleClearData}
+            aria-label="清除所有数据"
+            title="清除所有数据"
+            className="inline-flex items-center justify-center h-8 w-8 rounded-full hover:bg-gray-50 text-red-700"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              className="h-5 w-5"
+            >
+              <path
+                d="M3 6h18"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              ></path>
+              <path
+                d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              ></path>
+              <path
+                d="M10 11v6"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              ></path>
+              <path
+                d="M14 11v6"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              ></path>
+            </svg>
+          </button>
           <button
             onClick={async () => {
               await logout();
@@ -239,8 +296,7 @@ export default function Gallery() {
             <div ref={sentinelRef} className="h-px w-full" />
             {loading && (
               <div className="flex items-center justify-center py-8">
-                <div className="inline-flex items-center gap-2 text-gray-500">
-                  <div
+                <div
                     className="h-4 w-4 border-2 border-gray-300 border-t-gray-500 rounded-full animate-spin"
                     aria-label="loading more"
                   />
