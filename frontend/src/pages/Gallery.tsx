@@ -7,7 +7,11 @@ import Toast from "../components/Toast";
 
 export default function Gallery() {
   const nav = useNavigate();
-  const [items, setItems] = React.useState<string[]>([]);
+  const [items, setItems] = React.useState<{
+    id: string;
+    mime?: string;
+    thumbnailId?: string;
+  }[]>([]);
   const [cursor, setCursor] = React.useState<string>("");
   const [hasMore, setHasMore] = React.useState(false);
   const [loading, setLoading] = React.useState(false);
@@ -27,7 +31,7 @@ export default function Gallery() {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent).detail as { id?: string };
       if (!detail?.id) return;
-      setItems((prev) => prev.filter((x) => x !== detail.id));
+      setItems((prev) => prev.filter((x) => x.id !== detail.id));
       setToast({ message: "已删除并清理缓存", type: "success" });
     };
     window.addEventListener("gallery:removed", handler as EventListener);
@@ -42,7 +46,7 @@ export default function Gallery() {
     try {
       const data = await listFiles({ limit: 10, cursor });
       const ids = (data.keys || [])
-        .map((k: any) => (typeof k === "string" ? k : k.name || k.id))
+        .map((k: any) => ({ id: k.id, mime: k.mime, thumbnailId: k.thumbnailId }))
         .filter(Boolean);
       // 直接追加，由服务端 cursor 保证不重复
       setItems((prev) => prev.concat(ids));
@@ -223,8 +227,8 @@ export default function Gallery() {
             className="flex w-auto -ml-5"
             columnClassName="pl-5 bg-clip-padding"
           >
-            {items.map((id) => (
-              <ImageItem key={id} id={id} onCopyLink={() => copyLink(id)} />
+            {items.map((item) => (
+              <ImageItem key={item.id} item={item} onCopyLink={() => copyLink(item.id)} />
             ))}
           </Masonry>
         )}
@@ -258,9 +262,9 @@ export default function Gallery() {
   );
 }
 
-function ImageItem({ id, onCopyLink }: { id: string; onCopyLink: () => void }) {
-  const [imageLoaded, setImageLoaded] = React.useState(false);
-  const [imageError, setImageError] = React.useState(false);
+function ImageItem({ item, onCopyLink }: { item: { id: string; mime?: string; thumbnailId?: string; }; onCopyLink: () => void }) {
+  const [mediaLoaded, setMediaLoaded] = React.useState(false);
+  const [mediaError, setMediaError] = React.useState(false);
   const [deleting, setDeleting] = React.useState(false);
 
   const handleDelete = async (e: React.MouseEvent) => {
@@ -271,14 +275,14 @@ function ImageItem({ id, onCopyLink }: { id: string; onCopyLink: () => void }) {
     if (!ok) return;
     setDeleting(true);
     try {
-      const res = await fetch(`/api/files/${encodeURIComponent(id)}`, {
+      const res = await fetch(`/api/files/${encodeURIComponent(item.id)}`, {
         method: "DELETE",
         credentials: "include"
       });
       if (!res.ok) throw new Error("删除失败");
       // 触发外层移除：通过自定义事件广播
       window.dispatchEvent(
-        new CustomEvent("gallery:removed", { detail: { id } })
+        new CustomEvent("gallery:removed", { detail: { id: item.id } })
       );
     } catch (err: any) {
       // 失败仅提示
@@ -287,26 +291,30 @@ function ImageItem({ id, onCopyLink }: { id: string; onCopyLink: () => void }) {
       setDeleting(false);
     }
   };
-  const handleImageLoad = () => {
-    setImageLoaded(true);
+  const handleMediaLoad = () => {
+    setMediaLoaded(true);
   };
 
-  const handleImageError = () => {
-    setImageError(true);
-    setImageLoaded(true);
+  const handleMediaError = () => {
+    setMediaError(true);
+    setMediaLoaded(true);
   };
+
+  const isVideo = item.mime?.startsWith('video/');
+  const mediaUrl = `/file/${item.id}`;
+  const thumbnailUrl = isVideo && item.thumbnailId ? `/file/${item.thumbnailId}?thumbnail=true` : undefined;
 
   return (
     <div className="mb-5 break-inside-avoid">
       <div className="bg-white rounded-lg overflow-hidden group border border-gray-200 shadow-sm relative">
         <div className="relative overflow-hidden w-full">
-          {!imageLoaded && !imageError && (
+          {!mediaLoaded && !mediaError && (
             <div className="flex flex-col items-center justify-center w-full aspect-[3/4] bg-gray-50">
               <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mb-3"></div>
               <span className="text-sm text-gray-600 font-medium">加载中...</span>
             </div>
           )}
-          {imageError ? (
+          {mediaError ? (
             <div className="flex flex-col items-center justify-center w-full aspect-[3/4] bg-gray-50">
               <svg className="w-10 h-10 mb-2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
@@ -314,21 +322,35 @@ function ImageItem({ id, onCopyLink }: { id: string; onCopyLink: () => void }) {
               <span className="text-xs text-gray-500">加载失败</span>
             </div>
           ) : (
-            <a href={`/file/${id}`} target="_blank" rel="noreferrer" className="block">
-              <img 
-                src={`/file/${id}`} 
-                alt="" 
-                onLoad={handleImageLoad}
-                onError={handleImageError} 
-                loading="lazy" 
-                className={`block w-full object-cover transition-opacity duration-300 ${
-                  imageLoaded ? "opacity-100" : "opacity-0"
-                }`}
-              />
+            <a href={mediaUrl} target="_blank" rel="noreferrer" className="block">
+              {isVideo ? (
+                <video
+                  src={mediaUrl}
+                  poster={thumbnailUrl} // Use the thumbnail for the poster
+                  controls
+                  preload="metadata"
+                  onLoadedData={handleMediaLoad}
+                  onError={handleMediaError}
+                  className={`block w-full object-cover transition-opacity duration-300 ${
+                    mediaLoaded ? "opacity-100" : "opacity-0"
+                  }`}
+                />
+              ) : (
+                <img
+                  src={mediaUrl}
+                  alt=""
+                  onLoad={handleMediaLoad}
+                  onError={handleMediaError}
+                  loading="lazy"
+                  className={`block w-full object-cover transition-opacity duration-300 ${
+                    mediaLoaded ? "opacity-100" : "opacity-0"
+                  }`}
+                />
+              )}
             </a>
           )}
         </div>
-        {imageLoaded && !imageError && (
+        {mediaLoaded && !mediaError && (
           <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-200 bg-black/40">
             <button onClick={handleDelete} disabled={deleting} className="absolute top-2 right-2 h-8 px-2 text-xs rounded-md bg-rose-600 text-white shadow-sm hover:bg-rose-700 disabled:opacity-60">
               {deleting ? "删除中…" : "删除"}

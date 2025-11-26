@@ -16,8 +16,14 @@ export async function onRequest(context) {
   const result = await env.img_url.list({ limit, cursor })
   const keys = result.keys || []
 
+  const fileList = await Promise.all(keys.map(async (key) => {
+    const { name, metadata } = key;
+    const { mime, thumbnailId } = metadata || {};
+    return { id: name, mime, thumbnailId };
+  }));
+
   const body = JSON.stringify({
-    keys,
+    keys: fileList,
     list_complete: result.list_complete === true,
     cursor: result.cursor || null,
   })
