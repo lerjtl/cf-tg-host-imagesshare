@@ -81,4 +81,18 @@ export function uploadWithProgress(file: File, onProgress: (p: UploadProgress) =
             onProgress({ loaded: uploadedBytes, total: file.size, percent });
             resolveChunk();
           } else {
-            rejectChunk(new Error(xhr.responseText || `Chunk ${i} upload failed`
+            rejectChunk(new Error(xhr.responseText || `Chunk ${i} upload failed`));
+          }
+        };
+
+        xhr.onerror = () => {
+          rejectChunk(new Error(`Chunk ${i} upload failed`));
+        };
+      });
+
+      await chunkUploadPromise;
+    }
+
+    resolve(fileId);
+  });
+}
