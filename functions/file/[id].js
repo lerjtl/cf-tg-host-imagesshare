@@ -85,7 +85,7 @@ export async function onRequest(context) {
       fetchedFileUrl = `https://api.telegram.org/file/bot${env.TG_Bot_Token}/${filePath}`;
       console.log('functions/file/[id].js: Constructed Telegram file URL:', fetchedFileUrl);
   }
-
+  console.log('functions/file/[id].js: Attempting to fetch from:', fetchedFileUrl);
   const response = await fetch(fetchedFileUrl, {
     method: request.method,
     headers: request.headers,
@@ -93,25 +93,33 @@ export async function onRequest(context) {
   });
 
   // Log response details
-  console.log(response.ok, response.status);
+  console.log('functions/file/[id].js: Telegram fetch response status:', response.status, 'ok:', response.ok, 'Content-Type from Telegram:', response.headers.get('Content-Type'));
 
   // If the response is OK, proceed with further checks
   if (response.ok) {
     const headers = new Headers(response.headers);
     // 移除可能存在的 Content-Disposition 头，确保我们能完全控制它
     headers.delete("Content-Disposition");
-    // 强制浏览器内联预览而不是下载
-    headers.set("Content-Disposition", `inline; filename="${downloadFilename}"`);
+    // 强制浏览器内联预览而不是下载，使用纯 ASCII 文件名以提高兼容性
+    headers.set("Content-Disposition", `inline; filename="${fileId}"`);
+    // 添加原始文件名作为自定义头
+    headers.set("X-Original-Filename", encodeURIComponent(downloadFilename));
     headers.set("Content-Type", contentType);
+    console.log('functions/file/[id].js: Final response headers set:', { 'Content-Type': contentType, 'Content-Disposition': `inline; filename="${fileId}"`, 'X-Original-Filename': encodeURIComponent(downloadFilename) });
 
     return new Response(response.body, {
       status: response.status,
       statusText: response.statusText,
       headers
     });
+  } else {
+    // 如果 Telegram 返回的响应不是 OK，则返回一个通用的错误响应
+    console.error('functions/file/[id].js: Telegram file fetch failed with status:', response.status, 'statusText:', response.statusText);
+    return new Response("Failed to fetch file from Telegram", {
+        status: 500,
+        headers: { 'Content-Type': 'text/plain; charset=utf-8' }
+    });
   }
-
-  return response;
 }
 
 async function getFilePath(env, file_id) {

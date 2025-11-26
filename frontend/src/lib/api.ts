@@ -110,6 +110,7 @@ export function uploadWithProgress(file: File, onProgress: (p: UploadProgress) =
       if (!finalUploadRes.ok) {
         const errorData = await finalUploadRes.json().catch(() => ({}));
         const errorMessage = errorData.error || `Final upload failed with status ${finalUploadRes.status}`;
+        console.error('[frontend/src/lib/api.ts] Final upload response error:', errorData);
         throw new Error(errorMessage);
       }
 
