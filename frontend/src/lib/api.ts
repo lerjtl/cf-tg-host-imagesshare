@@ -92,6 +92,33 @@ export function uploadWithProgress(file: File, onProgress: (p: UploadProgress) =
       await chunkUploadPromise;
     }
 
-    resolve(fileId);
+    // Step 2: Send final upload request to trigger merging and Telegram upload
+    try {
+      const finalUploadRes = await fetch('/api/upload', {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'X-Final-Upload': 'true',
+          'X-File-ID': encodeURIComponent(fileId),
+          'X-File-Name': encodeURIComponent(file.name),
+          'X-File-Size': String(file.size),
+          'X-Total-Chunks': String(totalChunks),
+          'X-File-Mime-Type': file.type, // Pass MIME type for File constructor in backend
+        },
+      });
+
+      if (!finalUploadRes.ok) {
+        const errorData = await finalUploadRes.json().catch(() => ({}));
+        const errorMessage = errorData.error || `Final upload failed with status ${finalUploadRes.status}`;
+        throw new Error(errorMessage);
+      }
+
+      // Optionally, process the response from the final upload (e.g., get file URLs from Telegram)
+      const finalUploadResult = await finalUploadRes.json();
+      resolve(finalUploadResult);
+    } catch (error: any) {
+      console.error('Final upload request error:', error);
+      reject(new Error(error.message || 'Final upload failed'));
+    }
   });
 }

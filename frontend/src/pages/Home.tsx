@@ -127,6 +127,11 @@ export default function Home() {
 
         const result = await uploadWithProgress(item.file as File, updateProgress);
 
+        // 显式检查后端响应中的错误字段，即使 HTTP 状态码为 200
+        if (result && result.error) {
+          throw new Error(result.error);
+        }
+
         const urls: string[] = Array.isArray(result?.urls)
           ? result.urls
           : result?.url
