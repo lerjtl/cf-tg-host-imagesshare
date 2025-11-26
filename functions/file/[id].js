@@ -42,45 +42,49 @@ export async function onRequest(context) {
   let finalFileId = fileId;
   let contentType = "application/octet-stream";
   let downloadFilename = fileIdWithExt;
-
   let fetchedFileUrl = null; // 用于存储最终要获取的文件 URL
+  let thumbnailId = null; // Initialize thumbnailId here
 
   if (env.img_url && fileId) {
-    const kvKey = fileIdWithExt;
+    const kvKey = params.id; // The key is already fileId.ext
+    console.log('functions/file/[id].js: Looking up KV key:', kvKey);
     const record = await env.img_url.getWithMetadata(kvKey);
 
     if (record && record.metadata) {
       const metadata = record.metadata;
-      const { mime, thumbnailId } = metadata;
+      console.log('functions/file/[id].js: Found KV metadata:', metadata);
+      const { mime, thumbnailId: storedThumbnailId } = metadata;
       contentType = mime || contentType;
       downloadFilename = `${fileId}.${requestedExt || mimeToExt(mime)}`;
+      thumbnailId = storedThumbnailId; // Assign stored thumbnailId
 
       // 如果请求的是缩略图，并且存在 thumbnailId
       if (url.searchParams.get('thumbnail') === 'true' && thumbnailId) {
         finalFileId = thumbnailId;
-        // 尝试推断缩略图的 MIME 类型，默认为 image/jpeg
-        contentType = 'image/jpeg';
+        contentType = 'image/jpeg'; // Thumbnails are always JPEG
         downloadFilename = `${thumbnailId}.jpeg`;
-        fetchedFileUrl = null; // 强制从 Telegram 获取缩略图
-      } else if (requestedExt) {
-        // 如果请求的扩展名与 KV 中存储的扩展名不符，则更新 mime 类型
-        const extFromMime = mimeToExt(mime);
-        if (requestedExt.toLowerCase() !== extFromMime.toLowerCase()) {
-            contentType = getMimeTypeFromFileName(requestedExt) || contentType;
-        }
+        fetchedFileUrl = null; // Force fetch from Telegram for thumbnail
+        console.log('functions/file/[id].js: Serving thumbnail for file ID:', finalFileId);
+      } else {
+        console.log('functions/file/[id].js: Not serving thumbnail or no thumbnail ID.');
       }
     } else {
-      // 如果 KV 中没有元数据，尝试根据请求的扩展名设置 Content-Type
-      contentType = getMimeTypeFromFileName(requestedExt) || contentType;
+      console.warn('functions/file/[id].js: KV record or metadata not found for key:', kvKey);
     }
   }
 
   // 总是从 Telegram API 获取文件路径
-  const filePath = await getFilePath(env, finalFileId);
-  if (!filePath) {
-    return new Response("File not found", { status: 404 });
+  if (!fetchedFileUrl) {
+      console.log('functions/file/[id].js: Attempting to get file path from Telegram for finalFileId:', finalFileId);
+      const filePath = await getFilePath(env, finalFileId);
+      console.log('functions/file/[id].js: Telegram file path:', filePath);
+      if (!filePath) {
+          console.error('functions/file/[id].js: File path not found from Telegram for ID:', finalFileId);
+          return new Response("File not found", { status: 404 });
+      }
+      fetchedFileUrl = `https://api.telegram.org/file/bot${env.TG_Bot_Token}/${filePath}`;
+      console.log('functions/file/[id].js: Constructed Telegram file URL:', fetchedFileUrl);
   }
-  fetchedFileUrl = `https://api.telegram.org/file/bot${env.TG_Bot_Token}/${filePath}`;
 
   const response = await fetch(fetchedFileUrl, {
     method: request.method,
