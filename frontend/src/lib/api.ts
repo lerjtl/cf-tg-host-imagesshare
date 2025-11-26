@@ -57,7 +57,7 @@ export function uploadWithProgress(file: File, onProgress: (p: UploadProgress) =
       const xhr = new XMLHttpRequest();
       xhr.open('PUT', '/api/upload'); // Use PUT for chunk uploads
       xhr.withCredentials = true;
-      xhr.setRequestHeader('X-File-ID', fileId);
+      xhr.setRequestHeader('X-File-ID', encodeURIComponent(fileId));
       xhr.setRequestHeader('X-File-Name', encodeURIComponent(file.name));
       xhr.setRequestHeader('X-File-Size', String(file.size));
       xhr.setRequestHeader('X-Chunk-Index', String(i));
