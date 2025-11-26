@@ -230,8 +230,9 @@ export async function onRequestPut(context) {
 }
 
 function getFileId(response) {
+    console.log('getFileId: Full Telegram API response:', JSON.stringify(response, null, 2));
     if (!response.ok || !response.result) {
-        console.error('getFileId: Invalid response:', response);
+        console.error('getFileId: Invalid response (ok or result missing):', response);
         return null;
     }
 
@@ -242,6 +243,7 @@ function getFileId(response) {
     let thumbnailId = null;
 
     if (result.photo) {
+        console.log('getFileId: Found result.photo:', JSON.stringify(result.photo, null, 2));
         // 对于照片，Telegram 会返回一个尺寸数组，选择最大的作为 file_id
         fileId = result.photo.reduce((prev, current) =>
             (prev.file_size > current.file_size) ? prev : current
@@ -251,33 +253,42 @@ function getFileId(response) {
         thumbnailId = result.photo.reduce((prev, current) =>
             (prev.file_size < current.file_size) ? prev : current
         ).file_id; // Use smallest photo as thumbnail ID
-        console.log('getFileId: Found photo file_id:', fileId, 'thumbnailId:', thumbnailId);
+        console.log('getFileId: Extracted photo file_id:', fileId, 'thumbnailId:', thumbnailId);
     }
     if (result.document) {
+        console.log('getFileId: Found result.document:', JSON.stringify(result.document, null, 2));
         fileId = result.document.file_id;
-        console.log('getFileId: Found document file_id:', fileId);
+        console.log('getFileId: Extracted document file_id:', fileId);
         // 确保 thumbnail 存在且有 file_id
         if (result.document.thumbnail && result.document.thumbnail.file_id) {
             thumbnailId = result.document.thumbnail.file_id;
-            console.log('getFileId: Found document thumbnail_id:', thumbnailId);
+            console.log('getFileId: Extracted document thumbnail_id:', thumbnailId);
+        } else {
+            console.log('getFileId: Document has no thumbnail or thumbnail file_id.');
         }
     }
     if (result.video) {
+        console.log('getFileId: Found result.video:', JSON.stringify(result.video, null, 2));
         fileId = result.video.file_id;
-        console.log('getFileId: Found video file_id:', fileId);
+        console.log('getFileId: Extracted video file_id:', fileId);
         // 确保 thumbnail 存在且有 file_id
         if (result.video.thumbnail && result.video.thumbnail.file_id) {
             thumbnailId = result.video.thumbnail.file_id;
-            console.log('getFileId: Found video thumbnail_id:', thumbnailId);
+            console.log('getFileId: Extracted video thumbnail_id:', thumbnailId);
+        } else {
+            console.log('getFileId: Video has no thumbnail or thumbnail file_id.');
         }
     }
     if (result.sticker) {
+        console.log('getFileId: Found result.sticker:', JSON.stringify(result.sticker, null, 2));
         fileId = result.sticker.file_id;
-        console.log('getFileId: Found sticker file_id:', fileId);
+        console.log('getFileId: Extracted sticker file_id:', fileId);
         // Sticker 也可以有缩略图
         if (result.sticker.thumbnail && result.sticker.thumbnail.file_id) {
             thumbnailId = result.sticker.thumbnail.file_id;
-            console.log('getFileId: Found sticker thumbnail_id:', thumbnailId);
+            console.log('getFileId: Extracted sticker thumbnail_id:', thumbnailId);
+        } else {
+            console.log('getFileId: Sticker has no thumbnail or thumbnail file_id.');
         }
     }
 
@@ -290,34 +301,56 @@ function getFileId(response) {
 
 // 从 sendMediaGroup 返回结果中提取每个消息的文件 id（保持顺序）
 function getFileIdsFromGroup(response) {
-    if (!response.ok || !Array.isArray(response.result)) return [];
+    console.log('getFileIdsFromGroup: Full Telegram API response:', JSON.stringify(response, null, 2));
+    if (!response.ok || !Array.isArray(response.result)) {
+        console.error('getFileIdsFromGroup: Invalid response (ok or result missing or not array):', response);
+        return [];
+    }
     const ids = [];
     for (const msg of response.result) {
+        console.log('getFileIdsFromGroup: Processing message:', JSON.stringify(msg, null, 2));
         let fileId = null;
         let thumbnailId = null;
         if (msg.photo && Array.isArray(msg.photo) && msg.photo.length) {
+            console.log('getFileIdsFromGroup: Found msg.photo:', JSON.stringify(msg.photo, null, 2));
             const best = msg.photo.reduce((prev, current) => (prev.file_size > current.file_size) ? prev : current);
             fileId = best.file_id;
             // For photos, Telegram might not return a distinct thumbnail. Use the smallest photo as thumbnail if needed, or null.
             const smallestPhoto = msg.photo.reduce((prev, current) => (prev.file_size < current.file_size) ? prev : current);
             thumbnailId = smallestPhoto.file_id; // Using smallest photo as thumbnail ID
+            console.log('getFileIdsFromGroup: Extracted photo file_id:', fileId, 'thumbnailId:', thumbnailId);
         } else if (msg.video && msg.video.file_id) {
+            console.log('getFileIdsFromGroup: Found msg.video:', JSON.stringify(msg.video, null, 2));
             fileId = msg.video.file_id;
+            console.log('getFileIdsFromGroup: Extracted video file_id:', fileId);
             // 确保 thumbnail 存在且有 file_id
             if (msg.video.thumbnail && msg.video.thumbnail.file_id) {
                 thumbnailId = msg.video.thumbnail.file_id;
+                console.log('getFileIdsFromGroup: Extracted video thumbnail_id:', thumbnailId);
+            } else {
+                console.log('getFileIdsFromGroup: Video has no thumbnail or thumbnail file_id.');
             }
         } else if (msg.document && msg.document.file_id) {
+            console.log('getFileIdsFromGroup: Found msg.document:', JSON.stringify(msg.document, null, 2));
             fileId = msg.document.file_id;
+            console.log('getFileIdsFromGroup: Extracted document file_id:', fileId);
             // 确保 thumbnail 存在且有 file_id
             if (msg.document.thumbnail && msg.document.thumbnail.file_id) {
                 thumbnailId = msg.document.thumbnail.file_id;
+                console.log('getFileIdsFromGroup: Extracted document thumbnail_id:', thumbnailId);
+            } else {
+                console.log('getFileIdsFromGroup: Document has no thumbnail or thumbnail file_id.');
             }
         } else if (msg.sticker && msg.sticker.file_id) {
+            console.log('getFileIdsFromGroup: Found msg.sticker:', JSON.stringify(msg.sticker, null, 2));
             fileId = msg.sticker.file_id;
+            console.log('getFileIdsFromGroup: Extracted sticker file_id:', fileId);
             // Sticker 也可以有缩略图
             if (msg.sticker.thumbnail && msg.sticker.thumbnail.file_id) {
                 thumbnailId = msg.sticker.thumbnail.file_id;
+                console.log('getFileIdsFromGroup: Extracted sticker thumbnail_id:', thumbnailId);
+            } else {
+                console.log('getFileIdsFromGroup: Sticker has no thumbnail or thumbnail file_id.');
             }
         }
         if (fileId) {
