@@ -66,7 +66,6 @@ export function uploadWithProgress(file: File, onProgress: (p: UploadProgress) =
 
       const chunkUploadPromise = new Promise<void>((resolveChunk, rejectChunk) => {
         xhr.upload.onprogress = (evt) => {
-          // Only update progress for the current chunk being uploaded
           const chunkLoaded = evt.loaded;
           const currentTotalLoaded = uploadedBytes + chunkLoaded;
           const percent = file.size ? Math.round((currentTotalLoaded / file.size) * 100) : 0;
@@ -76,18 +75,18 @@ export function uploadWithProgress(file: File, onProgress: (p: UploadProgress) =
         xhr.onload = () => {
           if (xhr.status >= 200 && xhr.status < 300) {
             uploadedBytes += chunk.size;
-            // Update progress again after a chunk is completely uploaded
             const percent = file.size ? Math.round((uploadedBytes / file.size) * 100) : 0;
             onProgress({ loaded: uploadedBytes, total: file.size, percent });
             resolveChunk();
           } else {
-            rejectChunk(new Error(xhr.responseText || `Chunk ${i} upload failed`));
+            rejectChunk(new Error(xhr.responseText || `Chunk ${i} upload failed with status ${xhr.status}`));
           }
         };
 
-        xhr.onerror = () => {
-          rejectChunk(new Error(`Chunk ${i} upload failed`));
-        };
+        xhr.onerror = () => rejectChunk(new Error(`Chunk ${i} network error`));
+        xhr.ontimeout = () => rejectChunk(new Error(`Chunk ${i} upload timed out`));
+        xhr.timeout = 60000; // 60 seconds timeout
+        xhr.send(chunk);
       });
 
       await chunkUploadPromise;
