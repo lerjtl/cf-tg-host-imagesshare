@@ -144,42 +144,6 @@ export default function Gallery() {
             </svg>
           </Link>
           <button
-            onClick={handleClearData}
-            aria-label="清除所有数据"
-            title="清除所有数据"
-            className="inline-flex items-center justify-center h-8 w-8 rounded-full hover:bg-gray-50 text-red-700"
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              className="h-5 w-5"
-            >
-              <path
-                d="M3 6h18"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              ></path>
-              <path
-                d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              ></path>
-              <path
-                d="M10 11v6"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              ></path>
-              <path
-                d="M14 11v6"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              ></path>
-            </svg>
-          </button>
-          <button
             onClick={async () => {
               await logout();
               nav("/login", { replace: true });
@@ -218,6 +182,16 @@ export default function Gallery() {
 
       <main className="min-h-svh max-w-7xl mx-auto px-5 py-16">
         {msg && <div className="mb-3 text-sm text-red-500">{msg}</div>}
+
+        <div className="flex justify-between items-center mb-4">
+          <h1 className="text-2xl font-bold">文件列表</h1>
+          <button
+            onClick={handleClearData}
+            className="ml-4 px-4 py-2 rounded-md bg-red-500 text-white hover:bg-red-600 focus:outline-none"
+          >
+            清除所有数据
+          </button>
+        </div>
 
         {items.length === 0 && initialized ? (
           <div className="flex flex-col items-center justify-center py-20 text-center">
