@@ -6,7 +6,8 @@ export async function onRequestPost(context) {
     if (isFinalUpload) {
         try {
             const fileId = request.headers.get('X-File-ID');
-            const fileName = request.headers.get('X-File-Name');
+            const fileNameEncoded = request.headers.get('X-File-Name');
+            const fileName = fileNameEncoded ? decodeURIComponent(fileNameEncoded) : 'unknown_file'; // Decode the filename
             const fileSize = parseInt(request.headers.get('X-File-Size') || '0', 10);
             const totalChunks = parseInt(request.headers.get('X-Total-Chunks') || '0', 10);
 
@@ -74,6 +75,7 @@ export async function onRequestPost(context) {
                     if (!idObj || !idObj.file_id) throw new Error('Failed to get file ID');
                     results.push({ src: `/file/${idObj.file_id}.${ext}` });
                     await putMeta(idObj.file_id, ext, mime, env, idObj.thumbnail_id);
+                    console.log('Single media upload successful. File ID:', idObj.file_id, 'Thumbnail ID:', idObj.thumbnail_id, 'Metadata saved.');
                 } catch (e) {
                     const msg = String(e && e.message ? e.message : e);
                     if (kind === 'photo' && msg.includes('IMAGE_PROCESS_FAILED')) {
@@ -116,6 +118,7 @@ export async function onRequestPost(context) {
                             const mime = batch[i]?.mime || '';
                             results.push({ src: `/file/${id}.${ext}` });
                             await putMeta(id, ext, mime, env);
+                            console.log('Media group item uploaded. File ID:', id, 'Metadata saved.');
                         }
                     } catch (e) {
                         const msg = String(e && e.message ? e.message : e);
@@ -153,6 +156,7 @@ export async function onRequestPost(context) {
                 const ext = doc.ext || 'bin';
                 results.push({ src: `/file/${idObj.file_id}.${ext}` });
                 await putMeta(idObj.file_id, ext, doc.mime || '', env, idObj.thumbnail_id);
+                console.log('Document upload successful. File ID:', idObj.file_id, 'Thumbnail ID:', idObj.thumbnail_id, 'Metadata saved.');
             }
 
             // 清理 KV 存储中的块
