@@ -50,7 +50,7 @@ export async function onRequest(context) {
     const record = await env.img_url.getWithMetadata(kvKey);
 
     if (record && record.metadata) {
-      const metadata = record.metadata as any;
+      const metadata = record.metadata;
       const { mime, thumbnailId } = metadata;
       contentType = mime || contentType;
       downloadFilename = `${fileId}.${requestedExt || mimeToExt(mime)}`;
