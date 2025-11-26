@@ -476,7 +476,11 @@ async function postToTelegram(url, formData, label, timeoutMs = 60000, retries =
         try {
             const resp = await fetchWithTimeout(url, { method: 'POST', body: formData }, timeoutMs, label);
             const data = await resp.json();
-            if (resp.ok) return data;
+            if (resp.ok && data.ok) return data; // Check both HTTP status and Telegram API response 'ok' field
+            if (!data.ok) {
+                console.error('Telegram API response data.ok is false:', data);
+                throw new Error(data.description || 'Telegram API error: ' + JSON.stringify(data));
+            }
             // 仅对 5xx/429 进行重试
             if (attempt < retries && (resp.status >= 500 || resp.status === 429)) {
                 console.warn(`[retry] ${label} 响应 ${resp.status}，${delay}ms 后重试（第 ${attempt + 1} 次）`);
