@@ -55,17 +55,17 @@ export async function onRequestPost(context) {
             const mime = file.type || '';
             const size = file.size;
 
-            // 检查文件大小是否超过 Telegram 限制 (约 50MB)
-            // if (size > 50 * 1024 * 1024) {
-            //     console.error('[onRequestPost - Final Upload] File size exceeds Telegram API direct upload limit (50MB):', size);
-            //     throw new Error('File size exceeds Telegram API direct upload limit (50MB)'); // 直接抛出错误
-            // }
+            // 重新引入文件大小检查，明确指出 Telegram API 的直接上传限制
+            if (size > 50 * 1024 * 1024) {
+                console.error('[onRequestPost - Final Upload] File size exceeds Telegram API direct upload limit (50MB):', size);
+                throw new Error('File size exceeds Telegram API direct upload limit (50MB)');
+            }
 
             const results = [];
             const mediaCandidates = []; // { file, kind: 'photo' | 'video', ext, mime }
             const documents = []; // { file, ext, mime }
 
-            // 统一文件分类逻辑
+            // 统一文件分类逻辑（现在所有文件都已通过 50MB 限制检查）
             const fileInfo = { file: file, ext, mime: mime, size: size };
 
             const hardImageAsDoc = ['heic', 'heif', 'webp', 'ico'].includes(fileInfo.ext) || fileInfo.size > 5 * 1024 * 1024;
@@ -76,13 +76,8 @@ export async function onRequestPost(context) {
                     mediaCandidates.push({ file: fileInfo.file, kind: 'photo', ext: fileInfo.ext, mime: fileInfo.mime });
                 }
             } else if (fileInfo.mime.startsWith('video/')) {
-                // 如果视频大小超过 50MB，作为文档发送
-                if (fileInfo.size > 50 * 1024 * 1024) {
-                    console.log('[onRequestPost - Final Upload] Video size exceeds 50MB, sending as document:', fileName, size);
-                    documents.push({ file: fileInfo.file, ext: fileInfo.ext, mime: fileInfo.mime });
-                } else {
-                    mediaCandidates.push({ file: fileInfo.file, kind: 'video', ext: fileInfo.ext, mime: fileInfo.mime });
-                }
+                // 移除原有的大于 50MB 作为文档发送的逻辑，因为现在由全局检查处理
+                mediaCandidates.push({ file: fileInfo.file, kind: 'video', ext: fileInfo.ext, mime: fileInfo.mime });
             } else {
                 documents.push({ file: fileInfo.file, ext: fileInfo.ext, mime: fileInfo.mime });
             }
