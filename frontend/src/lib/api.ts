@@ -114,7 +114,18 @@ export function uploadWithProgress(file: File, onProgress: (p: UploadProgress) =
       credentials: 'include',
     });
     if (!finalRes.ok) {
-      throw new Error((await finalRes.text()) || 'Final upload failed');
+      // Check for specific error message for file size limit
+      const errorText = await finalRes.text();
+      try {
+        const errorJson = JSON.parse(errorText);
+        if (errorJson.error === 'File size exceeds Telegram API direct upload limit (50MB)') {
+          reject(new Error(errorJson.error));
+          return;
+        }
+      } catch (e) {
+        // Not a JSON error, proceed with generic error
+      }
+      throw new Error(errorText || 'Final upload failed');
     }
     resolve(finalRes.json().catch(() => ({})));
   });

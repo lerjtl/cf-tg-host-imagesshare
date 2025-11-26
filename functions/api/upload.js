@@ -32,6 +32,11 @@ export async function onRequestPost(context) {
             const mime = file.type || '';
             const size = file.size;
 
+            // 检查文件大小是否超过 Telegram 限制 (约 50MB)
+            if (size > 50 * 1024 * 1024) {
+                return new Response(JSON.stringify({ error: 'File size exceeds Telegram API direct upload limit (50MB)' }), { status: 413 });
+            }
+
             const results = [];
             const mediaCandidates = [];
             const documents = [];
@@ -105,7 +110,6 @@ export async function onRequestPost(context) {
                             const id = ids[i];
                             const ext = batch[i]?.ext || 'jpg';
                             const mime = batch[i]?.mime || '';
-                            // We don't have thumbnailId here for media groups yet
                             results.push({ src: `/file/${id}.${ext}` });
                             await putMeta(id, ext, mime, env);
                         }
@@ -118,6 +122,7 @@ export async function onRequestPost(context) {
                                 fd2.append('chat_id', env.TG_Chat_ID);
                                 fd2.append('document', it.file);
                                 const url2 = `https://api.telegram.org/bot${env.TG_Bot_Token}/sendDocument`;
+                                console.warn('sendMediaGroup 失败，回退 sendDocument:', msg);
                                 const data2 = await postToTelegram(url2, fd2, 'sendDocument', 60000, 2);
                                 const id2Obj = getFileId(data2);
                                 if (!id2Obj || !id2Obj.file_id) throw new Error('Failed to get file ID');
@@ -200,7 +205,8 @@ export async function onRequestPost(context) {
                 } else {
                     mediaCandidates.push({ file: f, kind: 'photo', ext, mime: type });
                 }
-            } else if (type.startsWith('video/')) {
+            }
+            else if (type.startsWith('video/')) {
                 mediaCandidates.push({ file: f, kind: 'video', ext, mime: type });
             } else {
                 documents.push({ file: f, ext, mime: type });
@@ -376,6 +382,15 @@ export async function onRequestPut(context) {
             // 合并所有 ArrayBuffer
             const mergedBuffer = await mergeArrayBuffers(fileParts);
 
+            // 检查文件大小是否超过 Telegram 限制 (约 50MB)
+            if (mergedBuffer.byteLength > 50 * 1024 * 1024) {
+                // 清理 KV 存储中的块
+                for (let i = 0; i < totalChunks; i++) {
+                    await env.CHUNKS.delete(`${fileId}_chunk_${i}`);
+                }
+                return new Response(JSON.stringify({ error: 'File size exceeds Telegram API direct upload limit (50MB)' }), { status: 413 });
+            }
+
             // 将合并后的文件作为完整的 Blob 对象处理
             const file = new File([mergedBuffer], fileName, { type: request.headers.get('X-File-Mime-Type') || getMimeTypeFromFileName(fileName) || 'application/octet-stream' });
             
@@ -457,8 +472,6 @@ export async function onRequestPut(context) {
                             const id = ids[i];
                             const ext = batch[i]?.ext || 'jpg';
                             const mime = batch[i]?.mime || '';
-                            // For media groups, Telegram API does not directly provide thumbnail_id for each item in the response.
-                            // If we need thumbnails for media groups, we might need to fetch them separately for each media item ID.
                             results.push({ src: `/file/${id}.${ext}` });
                             await putMeta(id, ext, mime, env);
                         }
@@ -471,6 +484,7 @@ export async function onRequestPut(context) {
                                 fd2.append('chat_id', env.TG_Chat_ID);
                                 fd2.append('document', it.file);
                                 const url2 = `https://api.telegram.org/bot${env.TG_Bot_Token}/sendDocument`;
+                                console.warn('sendMediaGroup 失败，回退 sendDocument:', msg);
                                 const data2 = await postToTelegram(url2, fd2, 'sendDocument', 60000, 2);
                                 const id2Obj = getFileId(data2);
                                 if (!id2Obj || !id2Obj.file_id) throw new Error('Failed to get file ID');
@@ -499,7 +513,11 @@ export async function onRequestPut(context) {
                 await putMeta(idObj.file_id, ext, doc.mime || '', env, idObj.thumbnail_id);
             }
 
-            // 统一返回 { urls: [...] }，便于前端批量解析
+            // 清理 KV 存储中的块
+            for (let i = 0; i < totalChunks; i++) {
+                await env.CHUNKS.delete(`${fileId}_chunk_${i}`);
+            }
+
             return new Response(
                 JSON.stringify({ urls: results.map(r => r.src) }),
                 {

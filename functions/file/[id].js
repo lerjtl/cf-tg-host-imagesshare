@@ -43,6 +43,8 @@ export async function onRequest(context) {
   let contentType = "application/octet-stream";
   let downloadFilename = fileIdWithExt;
 
+  let fetchedFileUrl = null; // 用于存储最终要获取的文件 URL
+
   if (env.img_url && fileId) {
     const kvKey = fileIdWithExt;
     const record = await env.img_url.getWithMetadata(kvKey);
@@ -59,6 +61,7 @@ export async function onRequest(context) {
         // 尝试推断缩略图的 MIME 类型，默认为 image/jpeg
         contentType = 'image/jpeg';
         downloadFilename = `${thumbnailId}.jpeg`;
+        fetchedFileUrl = null; // 强制从 Telegram 获取缩略图
       } else if (requestedExt) {
         // 如果请求的扩展名与 KV 中存储的扩展名不符，则更新 mime 类型
         const extFromMime = mimeToExt(mime);
@@ -72,13 +75,14 @@ export async function onRequest(context) {
     }
   }
 
+  // 总是从 Telegram API 获取文件路径
   const filePath = await getFilePath(env, finalFileId);
   if (!filePath) {
     return new Response("File not found", { status: 404 });
   }
-  fileUrl = `https://api.telegram.org/file/bot${env.TG_Bot_Token}/${filePath}`;
+  fetchedFileUrl = `https://api.telegram.org/file/bot${env.TG_Bot_Token}/${filePath}`;
 
-  const response = await fetch(fileUrl, {
+  const response = await fetch(fetchedFileUrl, {
     method: request.method,
     headers: request.headers,
     body: request.body
