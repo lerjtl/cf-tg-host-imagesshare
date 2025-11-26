@@ -5,6 +5,7 @@ export async function onRequestPost(context) {
     const isFinalUpload = request.headers.get('X-Final-Upload') === 'true';
     if (isFinalUpload) {
         try {
+            console.log('[onRequestPost - Final Upload] Received final upload request.');
             const fileId = request.headers.get('X-File-ID');
             const fileNameEncoded = request.headers.get('X-File-Name');
             const fileName = fileNameEncoded ? decodeURIComponent(fileNameEncoded) : 'unknown_file'; // Decode the filename
@@ -12,6 +13,7 @@ export async function onRequestPost(context) {
             const totalChunks = parseInt(request.headers.get('X-Total-Chunks') || '0', 10);
 
             if (!fileId || !fileName || !fileSize || isNaN(totalChunks)) {
+                console.error('[onRequestPost - Final Upload] Missing or invalid final upload headers.', { fileId, fileName, fileSize, totalChunks });
                 return new Response(JSON.stringify({ error: 'Missing or invalid final upload headers' }), { status: 400 });
             }
 
@@ -22,16 +24,18 @@ export async function onRequestPost(context) {
                 if (chunk) {
                     fileParts.push(chunk);
                 } else {
+                    console.error(`[onRequestPost - Final Upload] Missing chunk ${i} for file ${fileId}`);
                     throw new Error(`Missing chunk ${i} for file ${fileId}`);
                 }
             }
 
-            console.log('Starting to merge ArrayBuffers for file:', fileName, '(', totalChunks, 'chunks)');
+            console.log('[onRequestPost - Final Upload] Starting to merge ArrayBuffers for file:', fileName, '(', totalChunks, 'chunks)');
             const mergedBuffer = await mergeArrayBuffers(fileParts);
-            console.log('Merged ArrayBuffers. Merged file size:', mergedBuffer.byteLength, 'bytes');
+            console.log('[onRequestPost - Final Upload] Merged ArrayBuffers. Merged file size:', mergedBuffer.byteLength, 'bytes');
             // 确保 File 构造函数接收有效的 MIME 类型
             const mimeTypeFromHeader = request.headers.get('X-File-Mime-Type') || 'application/octet-stream';
             const file = new File([mergedBuffer], fileName, { type: mimeTypeFromHeader });
+            console.log('[onRequestPost - Final Upload] Created File object:', { name: file.name, type: file.type, size: file.size });
 
             const ext = (fileName.includes('.') ? fileName.split('.').pop() : '').toLowerCase();
             const mime = file.type || '';
@@ -39,6 +43,7 @@ export async function onRequestPost(context) {
 
             // 检查文件大小是否超过 Telegram 限制 (约 50MB)
             if (size > 50 * 1024 * 1024) {
+                console.error('[onRequestPost - Final Upload] File size exceeds Telegram API direct upload limit (50MB):', size);
                 return new Response(JSON.stringify({ error: 'File size exceeds Telegram API direct upload limit (50MB)' }), { status: 413 });
             }
 
@@ -58,6 +63,7 @@ export async function onRequestPost(context) {
             } else {
                 documents.push({ file: file, ext, mime: mime });
             }
+            console.log('[onRequestPost - Final Upload] File classified:', { mediaCandidatesCount: mediaCandidates.length, documentsCount: documents.length });
 
             if (mediaCandidates.length === 1) {
                 const { file: f, kind, ext, mime } = mediaCandidates[0];
@@ -68,27 +74,39 @@ export async function onRequestPost(context) {
                 fd.append(field, f);
 
                 const url = `https://api.telegram.org/bot${env.TG_Bot_Token}/${endpoint}`;
-                console.log('Sending request to:', url);
+                console.log('[onRequestPost - Final Upload] Sending single media request to:', url);
                 try {
                     const data = await postToTelegram(url, fd, endpoint, 60000, 2);
+                    console.log('[onRequestPost - Final Upload] Telegram API response for single media:', JSON.stringify(data, null, 2));
                     const idObj = getFileId(data);
-                    if (!idObj || !idObj.file_id) throw new Error('Failed to get file ID');
+                    if (!idObj || !idObj.file_id) {
+                        console.error('[onRequestPost - Final Upload] Failed to get file ID from Telegram response for single media.', { data });
+                        throw new Error('Failed to get file ID');
+                    }
                     results.push({ src: `/file/${idObj.file_id}.${ext}` });
+                    console.log('[onRequestPost - Final Upload] Calling putMeta for single media.', { fileId: idObj.file_id, ext, mime, thumbnailId: idObj.thumbnail_id });
                     await putMeta(idObj.file_id, ext, mime, env, idObj.thumbnail_id);
-                    console.log('Single media upload successful. File ID:', idObj.file_id, 'Thumbnail ID:', idObj.thumbnail_id, 'Metadata saved.');
+                    console.log('[onRequestPost - Final Upload] Single media upload successful. File ID:', idObj.file_id, 'Thumbnail ID:', idObj.thumbnail_id, 'Metadata saved.');
                 } catch (e) {
                     const msg = String(e && e.message ? e.message : e);
+                    console.error('[onRequestPost - Final Upload] Error during single media upload to Telegram:', msg);
                     if (kind === 'photo' && msg.includes('IMAGE_PROCESS_FAILED')) {
                         const fd2 = new FormData();
                         fd2.append('chat_id', env.TG_Chat_ID);
                         fd2.append('document', f);
                         const url2 = `https://api.telegram.org/bot${env.TG_Bot_Token}/sendDocument`;
-                        console.warn('sendPhoto 失败，回退 sendDocument:', msg);
+                        console.warn('[onRequestPost - Final Upload] sendPhoto 失败，回退 sendDocument:', msg);
                         const data2 = await postToTelegram(url2, fd2, 'sendDocument', 60000, 2);
+                        console.log('[onRequestPost - Final Upload] Telegram API response for fallback document (single media):', JSON.stringify(data2, null, 2));
                         const id2Obj = getFileId(data2);
-                        if (!id2Obj || !id2Obj.file_id) throw new Error('Failed to get file ID');
+                        if (!id2Obj || !id2Obj.file_id) {
+                            console.error('[onRequestPost - Final Upload] Failed to get file ID from Telegram response for fallback document (single media).', { data2 });
+                            throw new Error('Failed to get file ID');
+                        }
                         results.push({ src: `/file/${id2Obj.file_id}.${ext || 'jpg'}` });
+                        console.log('[onRequestPost - Final Upload] Calling putMeta for fallback document (single media).', { fileId: id2Obj.file_id, ext: ext || 'jpg', mime, thumbnailId: id2Obj.thumbnail_id });
                         await putMeta(id2Obj.file_id, ext || 'jpg', mime, env, id2Obj.thumbnail_id);
+                        console.log('[onRequestPost - Final Upload] Fallback document upload successful. File ID:', id2Obj.file_id, 'Thumbnail ID:', id2Obj.thumbnail_id, 'Metadata saved.');
                     } else {
                         throw e;
                     }
@@ -107,35 +125,47 @@ export async function onRequestPost(context) {
                     fd.append('media', JSON.stringify(media));
 
                     const url = `https://api.telegram.org/bot${env.TG_Bot_Token}/sendMediaGroup`;
-                    console.log('Sending request to:', url);
+                    console.log('[onRequestPost - Final Upload] Sending media group request to:', url);
                     try {
                         const data = await postToTelegram(url, fd, 'sendMediaGroup', 60000, 2);
-                        const ids = getFileIdsFromGroup(data); // Note: getFileIdsFromGroup now returns thumbnail IDs
-                        if (!ids.length) throw new Error('Failed to get file IDs from media group');
-                        for (let i = 0; i < ids.length; i++) {
-                            const idObj = ids[i];
+                        console.log('[onRequestPost - Final Upload] Telegram API response for media group:', JSON.stringify(data, null, 2));
+                        const idObjs = getFileIdsFromGroup(data); // Note: getFileIdsFromGroup now returns thumbnail IDs
+                        if (!idObjs.length) {
+                            console.error('[onRequestPost - Final Upload] Failed to get file IDs from Telegram response for media group.', { data });
+                            throw new Error('Failed to get file IDs from media group');
+                        }
+                        for (let i = 0; i < idObjs.length; i++) {
+                            const idObj = idObjs[i];
                             const ext = batch[i]?.ext || 'jpg';
                             const mime = batch[i]?.mime || '';
                             results.push({ src: `/file/${idObj.file_id}.${ext}` });
+                            console.log('[onRequestPost - Final Upload] Calling putMeta for media group item.', { fileId: idObj.file_id, ext, mime, thumbnailId: idObj.thumbnail_id });
                             await putMeta(idObj.file_id, ext, mime, env, idObj.thumbnail_id);
-                            console.log('Media group item uploaded. File ID:', idObj.file_id, 'Thumbnail ID:', idObj.thumbnail_id, 'Metadata saved.');
+                            console.log('[onRequestPost - Final Upload] Media group item uploaded. File ID:', idObj.file_id, 'Thumbnail ID:', idObj.thumbnail_id, 'Metadata saved.');
                         }
                     } catch (e) {
                         const msg = String(e && e.message ? e.message : e);
+                        console.error('[onRequestPost - Final Upload] Error during media group upload to Telegram:', msg);
                         if (msg.includes('IMAGE_PROCESS_FAILED')) {
-                            console.warn('sendMediaGroup 失败，改为逐个 sendDocument:', msg);
+                            console.warn('[onRequestPost - Final Upload] sendMediaGroup 失败，改为逐个 sendDocument:', msg);
                             for (const it of batch) {
                                 const fd2 = new FormData();
                                 fd2.append('chat_id', env.TG_Chat_ID);
                                 fd2.append('document', it.file);
                                 const url2 = `https://api.telegram.org/bot${env.TG_Bot_Token}/sendDocument`;
-                                console.warn('sendMediaGroup 失败，回退 sendDocument:', msg);
+                                console.warn('[onRequestPost - Final Upload] sendMediaGroup 失败，回退 sendDocument:', msg);
                                 const data2 = await postToTelegram(url2, fd2, 'sendDocument', 60000, 2);
+                                console.log('[onRequestPost - Final Upload] Telegram API response for fallback document (media group):', JSON.stringify(data2, null, 2));
                                 const id2Obj = getFileId(data2);
-                                if (!id2Obj || !id2Obj.file_id) throw new Error('Failed to get file ID');
+                                if (!id2Obj || !id2Obj.file_id) {
+                                    console.error('[onRequestPost - Final Upload] Failed to get file ID from Telegram response for fallback document (media group).', { data2 });
+                                    throw new Error('Failed to get file ID');
+                                }
                                 const ext2 = it.ext || 'jpg';
                                 results.push({ src: `/file/${id2Obj.file_id}.${ext2}` });
+                                console.log('[onRequestPost - Final Upload] Calling putMeta for fallback document (media group).', { fileId: id2Obj.file_id, ext: ext2, mime: it.mime, thumbnailId: id2Obj.thumbnail_id });
                                 await putMeta(id2Obj.file_id, ext2, it.mime || '', env, id2Obj.thumbnail_id);
+                                console.log('[onRequestPost - Final Upload] Fallback document upload successful. File ID:', id2Obj.file_id, 'Thumbnail ID:', id2Obj.thumbnail_id, 'Metadata saved.');
                             }
                         } else {
                             throw e;
@@ -149,20 +179,27 @@ export async function onRequestPost(context) {
                 fd.append('chat_id', env.TG_Chat_ID);
                 fd.append('document', doc.file);
                 const url = `https://api.telegram.org/bot${env.TG_Bot_Token}/sendDocument`;
-                console.log('Sending request to:', url);
+                console.log('[onRequestPost - Final Upload] Sending document request to:', url);
                 const data = await postToTelegram(url, fd, 'sendDocument', 60000, 2);
+                console.log('[onRequestPost - Final Upload] Telegram API response for document:', JSON.stringify(data, null, 2));
                 const idObj = getFileId(data);
-                if (!idObj || !idObj.file_id) throw new Error('Failed to get file ID');
+                if (!idObj || !idObj.file_id) {
+                    console.error('[onRequestPost - Final Upload] Failed to get file ID from Telegram response for document.', { data });
+                    throw new Error('Failed to get file ID');
+                }
                 const ext = doc.ext || 'bin';
                 results.push({ src: `/file/${idObj.file_id}.${ext}` });
+                console.log('[onRequestPost - Final Upload] Calling putMeta for document.', { fileId: idObj.file_id, ext, mime: doc.mime, thumbnailId: idObj.thumbnail_id });
                 await putMeta(idObj.file_id, ext, doc.mime || '', env, idObj.thumbnail_id);
-                console.log('Document upload successful. File ID:', idObj.file_id, 'Thumbnail ID:', idObj.thumbnail_id, 'Metadata saved.');
+                console.log('[onRequestPost - Final Upload] Document upload successful. File ID:', idObj.file_id, 'Thumbnail ID:', idObj.thumbnail_id, 'Metadata saved.');
             }
 
             // 清理 KV 存储中的块
             for (let i = 0; i < totalChunks; i++) {
+                console.log(`[onRequestPost - Final Upload] Deleting chunk ${i} for file ${fileId}`);
                 await env.CHUNKS.delete(`${fileId}_chunk_${i}`);
             }
+            console.log('[onRequestPost - Final Upload] All chunks deleted from KV.');
 
             return new Response(
                 JSON.stringify({ urls: results.map(r => r.src) }),
@@ -172,7 +209,7 @@ export async function onRequestPost(context) {
                 }
             );
         } catch (error) {
-            console.error('Final upload error:', error);
+            console.error('[onRequestPost - Final Upload] Final upload error:', error && error.message ? error.message : error);
             return new Response(
                 JSON.stringify({ error: error.message }),
                 {
@@ -182,14 +219,18 @@ export async function onRequestPost(context) {
             );
         }
     } else {
+        // This is a chunk upload request (PUT method is handled by onRequestPut, this POST is for legacy or single-file non-chunked upload)
+        // Given the frontend now uses chunked PUT and then a final POST, this 'else' block should ideally not be hit for file uploads.
+        // However, we'll keep the original non-chunked POST logic for robustness if somehow a non-chunked POST comes through.
+        console.log('[onRequestPost - Non-Final Upload] Received non-final upload request.');
         try {
-
             const clonedRequest = request.clone();
             const formData = await clonedRequest.formData();
 
             // 同时兼容单文件与多文件：读取所有名为 file 的表单域
             const files = formData.getAll('file') || [];
             if (!files.length) {
+                console.error('[onRequestPost - Non-Final Upload] No file uploaded.');
                 throw new Error('No file uploaded');
             }
 
@@ -219,6 +260,7 @@ export async function onRequestPost(context) {
                     documents.push({ file: f, ext, mime: type });
                 }
             }
+            console.log('[onRequestPost - Non-Final Upload] File classified:', { mediaCandidatesCount: mediaCandidates.length, documentsCount: documents.length });
 
             // 处理媒体候选：
             // - 若仅 1 个媒体：分别用 sendPhoto / sendVideo
@@ -232,27 +274,40 @@ export async function onRequestPost(context) {
                 fd.append(field, file);
 
                 const url = `https://api.telegram.org/bot${env.TG_Bot_Token}/${endpoint}`;
-                console.log('Sending request to:', url);
+                console.log('[onRequestPost - Non-Final Upload] Sending single media request to:', url);
                 try {
                     const data = await postToTelegram(url, fd, endpoint, 60000, 2);
+                    console.log('[onRequestPost - Non-Final Upload] Telegram API response for single media:', JSON.stringify(data, null, 2));
                     const idObj = getFileId(data);
-                    if (!idObj || !idObj.file_id) throw new Error('Failed to get file ID');
+                    if (!idObj || !idObj.file_id) {
+                        console.error('[onRequestPost - Non-Final Upload] Failed to get file ID from Telegram response for single media.', { data });
+                        throw new Error('Failed to get file ID');
+                    }
                     results.push({ src: `/file/${idObj.file_id}.${ext}` });
+                    console.log('[onRequestPost - Non-Final Upload] Calling putMeta for single media.', { fileId: idObj.file_id, ext, mime, thumbnailId: idObj.thumbnail_id });
                     await putMeta(idObj.file_id, ext, mime, env, idObj.thumbnail_id);
+                    console.log('[onRequestPost - Non-Final Upload] Single media upload successful. File ID:', idObj.file_id, 'Thumbnail ID:', idObj.thumbnail_id, 'Metadata saved.');
                 } catch (e) {
                     const msg = String(e && e.message ? e.message : e);
+                    console.error('[onRequestPost - Non-Final Upload] Error during single media upload to Telegram:', msg);
                     // 单媒体失败时，对图片回退为 document 再试
                     if (kind === 'photo' && msg.includes('IMAGE_PROCESS_FAILED')) {
                         const fd2 = new FormData();
                         fd2.append('chat_id', env.TG_Chat_ID);
                         fd2.append('document', file);
                         const url2 = `https://api.telegram.org/bot${env.TG_Bot_Token}/sendDocument`;
-                        console.warn('sendPhoto 失败，回退 sendDocument:', msg);
+                        console.warn('[onRequestPost - Non-Final Upload] sendPhoto 失败，回退 sendDocument:', msg);
                         const data2 = await postToTelegram(url2, fd2, 'sendDocument', 60000, 2);
+                        console.log('[onRequestPost - Non-Final Upload] Telegram API response for fallback document (single media):', JSON.stringify(data2, null, 2));
                         const id2Obj = getFileId(data2);
-                        if (!id2Obj || !id2Obj.file_id) throw new Error('Failed to get file ID');
+                        if (!id2Obj || !id2Obj.file_id) {
+                            console.error('[onRequestPost - Non-Final Upload] Failed to get file ID from Telegram response for fallback document (single media).', { data2 });
+                            throw new Error('Failed to get file ID');
+                        }
                         results.push({ src: `/file/${id2Obj.file_id}.${ext || 'jpg'}` });
+                        console.log('[onRequestPost - Non-Final Upload] Calling putMeta for fallback document (single media).', { fileId: id2Obj.file_id, ext: ext || 'jpg', mime, thumbnailId: id2Obj.thumbnail_id });
                         await putMeta(id2Obj.file_id, ext || 'jpg', mime, env, id2Obj.thumbnail_id);
+                        console.log('[onRequestPost - Non-Final Upload] Fallback document upload successful. File ID:', id2Obj.file_id, 'Thumbnail ID:', id2Obj.thumbnail_id, 'Metadata saved.');
                     } else {
                         throw e;
                     }
@@ -271,34 +326,47 @@ export async function onRequestPost(context) {
                     fd.append('media', JSON.stringify(media));
 
                     const url = `https://api.telegram.org/bot${env.TG_Bot_Token}/sendMediaGroup`;
-                    console.log('Sending request to:', url);
+                    console.log('[onRequestPost - Non-Final Upload] Sending media group request to:', url);
                     try {
                         const data = await postToTelegram(url, fd, 'sendMediaGroup', 60000, 2);
-                        const ids = getFileIdsFromGroup(data);
-                        if (!ids.length) throw new Error('Failed to get file IDs from media group');
-                        for (let i = 0; i < ids.length; i++) {
-                            const id = ids[i];
+                        console.log('[onRequestPost - Non-Final Upload] Telegram API response for media group:', JSON.stringify(data, null, 2));
+                        const idObjs = getFileIdsFromGroup(data);
+                        if (!idObjs.length) {
+                            console.error('[onRequestPost - Non-Final Upload] Failed to get file IDs from Telegram response for media group.', { data });
+                            throw new Error('Failed to get file IDs from media group');
+                        }
+                        for (let i = 0; i < idObjs.length; i++) {
+                            const idObj = idObjs[i];
                             const ext = batch[i]?.ext || 'jpg';
                             const mime = batch[i]?.mime || '';
-                            results.push({ src: `/file/${id}.${ext}` });
-                            await putMeta(id, ext, mime, env);
+                            results.push({ src: `/file/${idObj.file_id}.${ext}` });
+                            console.log('[onRequestPost - Non-Final Upload] Calling putMeta for media group item.', { fileId: idObj.file_id, ext, mime, thumbnailId: idObj.thumbnail_id });
+                            await putMeta(idObj.file_id, ext, mime, env, idObj.thumbnail_id);
+                            console.log('[onRequestPost - Non-Final Upload] Media group item uploaded. File ID:', idObj.file_id, 'Thumbnail ID:', idObj.thumbnail_id, 'Metadata saved.');
                         }
                     } catch (e) {
                         const msg = String(e && e.message ? e.message : e);
+                        console.error('[onRequestPost - Non-Final Upload] Error during media group upload to Telegram:', msg);
                         if (msg.includes('IMAGE_PROCESS_FAILED')) {
-                            console.warn('sendMediaGroup 失败，改为逐个 sendDocument:', msg);
+                            console.warn('[onRequestPost - Non-Final Upload] sendMediaGroup 失败，改为逐个 sendDocument:', msg);
                             for (const it of batch) {
                                 const fd2 = new FormData();
                                 fd2.append('chat_id', env.TG_Chat_ID);
                                 fd2.append('document', it.file);
                                 const url2 = `https://api.telegram.org/bot${env.TG_Bot_Token}/sendDocument`;
-                                console.warn('sendMediaGroup 失败，回退 sendDocument:', msg);
+                                console.warn('[onRequestPost - Non-Final Upload] sendMediaGroup 失败，回退 sendDocument:', msg);
                                 const data2 = await postToTelegram(url2, fd2, 'sendDocument', 60000, 2);
+                                console.log('[onRequestPost - Non-Final Upload] Telegram API response for fallback document (media group):', JSON.stringify(data2, null, 2));
                                 const id2Obj = getFileId(data2);
-                                if (!id2Obj || !id2Obj.file_id) throw new Error('Failed to get file ID');
+                                if (!id2Obj || !id2Obj.file_id) {
+                                    console.error('[onRequestPost - Non-Final Upload] Failed to get file ID from Telegram response for fallback document (media group).', { data2 });
+                                    throw new Error('Failed to get file ID');
+                                }
                                 const ext2 = it.ext || 'jpg';
                                 results.push({ src: `/file/${id2Obj.file_id}.${ext2}` });
+                                console.log('[onRequestPost - Non-Final Upload] Calling putMeta for fallback document (media group).', { fileId: id2Obj.file_id, ext: ext2, mime: it.mime, thumbnailId: id2Obj.thumbnail_id });
                                 await putMeta(id2Obj.file_id, ext2, it.mime || '', env, id2Obj.thumbnail_id);
+                                console.log('[onRequestPost - Non-Final Upload] Fallback document upload successful. File ID:', id2Obj.file_id, 'Thumbnail ID:', id2Obj.thumbnail_id, 'Metadata saved.');
                             }
                         } else {
                             throw e;
@@ -312,13 +380,19 @@ export async function onRequestPost(context) {
                 fd.append('chat_id', env.TG_Chat_ID);
                 fd.append('document', doc.file);
                 const url = `https://api.telegram.org/bot${env.TG_Bot_Token}/sendDocument`;
-                console.log('Sending request to:', url);
+                console.log('[onRequestPost - Non-Final Upload] Sending document request to:', url);
                 const data = await postToTelegram(url, fd, 'sendDocument', 60000, 2);
+                console.log('[onRequestPost - Non-Final Upload] Telegram API response for document:', JSON.stringify(data, null, 2));
                 const idObj = getFileId(data);
-                if (!idObj || !idObj.file_id) throw new Error('Failed to get file ID');
+                if (!idObj || !idObj.file_id) {
+                    console.error('[onRequestPost - Non-Final Upload] Failed to get file ID from Telegram response for document.', { data });
+                    throw new Error('Failed to get file ID');
+                }
                 const ext = doc.ext || 'bin';
                 results.push({ src: `/file/${idObj.file_id}.${ext}` });
+                console.log('[onRequestPost - Non-Final Upload] Calling putMeta for document.', { fileId: idObj.file_id, ext, mime: doc.mime, thumbnailId: idObj.thumbnail_id });
                 await putMeta(idObj.file_id, ext, doc.mime || '', env, idObj.thumbnail_id);
+                console.log('[onRequestPost - Non-Final Upload] Document upload successful. File ID:', idObj.file_id, 'Thumbnail ID:', idObj.thumbnail_id, 'Metadata saved.');
             }
 
             // 统一返回 { urls: [...] }，便于前端批量解析
@@ -330,7 +404,7 @@ export async function onRequestPost(context) {
                 }
             );
         } catch (error) {
-            console.error('Upload error:', error);
+            console.error('[onRequestPost - Non-Final Upload] Upload error:', error && error.message ? error.message : error);
             return new Response(
                 JSON.stringify({ error: error.message }),
                 {
@@ -536,7 +610,10 @@ async function mergeArrayBuffers(buffers) {
 // 写入最小 KV 元数据，便于管理后台读取
 async function putMeta(fileId, ext, mime, env, thumbnailId = null) {
     try {
-        if (!env || !env.img_url) return;
+        if (!env || !env.img_url) {
+            console.error('KV binding env.img_url is not available. Cannot store metadata.');
+            return;
+        }
         const value = JSON.stringify({ mime, thumbnailId });
         const metadata = {
             TimeStamp: Date.now(),
@@ -544,9 +621,10 @@ async function putMeta(fileId, ext, mime, env, thumbnailId = null) {
         // 直接使用 fileId.ext 作为键保存元数据
         const key = ext ? `${fileId}.${ext}` : fileId;
         await env.img_url.put(key, value, { metadata });
+        console.log(`KV put successful for key: ${key}, thumbnailId: ${thumbnailId}`);
     } catch (e) {
-        // 仅记录，不影响主流程
-        console.log('KV put error', e && e.message ? e.message : e);
+        // 记录具体的 KV put 错误
+        console.error('KV put error:', e && e.message ? e.message : e, 'for key:', fileId);
     }
 }
 
