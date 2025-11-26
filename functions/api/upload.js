@@ -4,16 +4,16 @@ export async function onRequestPost(context) {
     // 检查是否是最终上传请求
     const isFinalUpload = request.headers.get('X-Final-Upload') === 'true';
     if (isFinalUpload) {
-        const fileId = request.headers.get('X-File-ID');
-        const fileName = request.headers.get('X-File-Name');
-        const fileSize = parseInt(request.headers.get('X-File-Size') || '0', 10);
-        const totalChunks = parseInt(request.headers.get('X-Total-Chunks') || '0', 10);
-
-        if (!fileId || !fileName || !fileSize || isNaN(totalChunks)) {
-            return new Response(JSON.stringify({ error: 'Missing or invalid final upload headers' }), { status: 400 });
-        }
-
         try {
+            const fileId = request.headers.get('X-File-ID');
+            const fileName = request.headers.get('X-File-Name');
+            const fileSize = parseInt(request.headers.get('X-File-Size') || '0', 10);
+            const totalChunks = parseInt(request.headers.get('X-Total-Chunks') || '0', 10);
+
+            if (!fileId || !fileName || !fileSize || isNaN(totalChunks)) {
+                return new Response(JSON.stringify({ error: 'Missing or invalid final upload headers' }), { status: 400 });
+            }
+
             const fileParts = [];
             for (let i = 0; i < totalChunks; i++) {
                 const chunkKey = `${fileId}_chunk_${i}`;
@@ -175,169 +175,164 @@ export async function onRequestPost(context) {
                 }
             );
         }
-    }
+    } else {
+        try {
 
-    try {
+            const clonedRequest = request.clone();
+            const formData = await clonedRequest.formData();
 
-        const clonedRequest = request.clone();
-        const formData = await clonedRequest.formData();
+            // 同时兼容单文件与多文件：读取所有名为 file 的表单域
+            const files = formData.getAll('file') || [];
+            if (!files.length) {
+                throw new Error('No file uploaded');
+            }
 
-        // 同时兼容单文件与多文件：读取所有名为 file 的表单域
-        const files = formData.getAll('file') || [];
-        if (!files.length) {
-            throw new Error('No file uploaded');
-        }
+            const results = [];
 
-        const results = [];
+            // 将文件按类型拆分：图片 / 视频 作为媒体组候选；其他作为文档单发
+            const mediaCandidates = []; // { file, kind: 'photo' | 'video', ext, mime }
+            const documents = []; // { file, ext, mime }
 
-        // 将文件按类型拆分：图片 / 视频 作为媒体组候选；其他作为文档单发
-        const mediaCandidates = []; // { file, kind: 'photo' | 'video', ext, mime }
-        const documents = []; // { file, ext, mime }
-
-        for (const f of files) {
-            const name = f.name || 'file';
-            const ext = (name.includes('.') ? name.split('.').pop() : '').toLowerCase();
-            const type = f.type || '';
-            const size = typeof f.size === 'number' ? f.size : 0;
-            // 对于 Telegram 容易处理失败的图片格式或较大的图片，直接走 document 提高成功率
-            const hardImageAsDoc = ['heic', 'heif', 'webp', 'ico'].includes(ext) || size > 5 * 1024 * 1024; // >5MB 走 document
-            if (type.startsWith('image/')) {
-                if (hardImageAsDoc) {
-                    documents.push({ file: f, ext: ext || 'jpg', mime: type });
+            for (const f of files) {
+                const name = f.name || 'file';
+                const ext = (name.includes('.') ? name.split('.').pop() : '').toLowerCase();
+                const type = f.type || '';
+                const size = typeof f.size === 'number' ? f.size : 0;
+                // 对于 Telegram 容易处理失败的图片格式或较大的图片，直接走 document 提高成功率
+                const hardImageAsDoc = ['heic', 'heif', 'webp', 'ico'].includes(ext) || size > 5 * 1024 * 1024; // >5MB 走 document
+                if (type.startsWith('image/')) {
+                    if (hardImageAsDoc) {
+                        documents.push({ file: f, ext: ext || 'jpg', mime: type });
+                    } else {
+                        mediaCandidates.push({ file: f, kind: 'photo', ext, mime: type });
+                    }
+                }
+                else if (type.startsWith('video/')) {
+                    mediaCandidates.push({ file: f, kind: 'video', ext, mime: type });
                 } else {
-                    mediaCandidates.push({ file: f, kind: 'photo', ext, mime: type });
+                    documents.push({ file: f, ext, mime: type });
                 }
             }
-            else if (type.startsWith('video/')) {
-                mediaCandidates.push({ file: f, kind: 'video', ext, mime: type });
-            } else {
-                documents.push({ file: f, ext, mime: type });
-            }
-        }
 
-        // 处理媒体候选：
-        // - 若仅 1 个媒体：分别用 sendPhoto / sendVideo
-        // - 若 >= 2 个：按 10 个为一批使用 sendMediaGroup
-        if (mediaCandidates.length === 1) {
-            const { file, kind, ext, mime } = mediaCandidates[0];
-            const fd = new FormData();
-            fd.append('chat_id', env.TG_Chat_ID);
-            const endpoint = kind === 'photo' ? 'sendPhoto' : 'sendVideo';
-            const field = kind === 'photo' ? 'photo' : 'video';
-            fd.append(field, file);
-
-            const url = `https://api.telegram.org/bot${env.TG_Bot_Token}/${endpoint}`;
-            console.log('Sending request to:', url);
-            try {
-                const data = await postToTelegram(url, fd, endpoint, 60000, 2);
-                const idObj = getFileId(data);
-                if (!idObj || !idObj.file_id) throw new Error('Failed to get file ID');
-                results.push({ src: `/file/${idObj.file_id}.${ext}` });
-                await putMeta(idObj.file_id, ext, mime, env, idObj.thumbnail_id);
-            } catch (e) {
-                const msg = String(e && e.message ? e.message : e);
-                // 单媒体失败时，对图片回退为 document 再试
-                if (kind === 'photo' && msg.includes('IMAGE_PROCESS_FAILED')) {
-                    const fd2 = new FormData();
-                    fd2.append('chat_id', env.TG_Chat_ID);
-                    fd2.append('document', file);
-                    const url2 = `https://api.telegram.org/bot${env.TG_Bot_Token}/sendDocument`;
-                    console.warn('sendPhoto 失败，回退 sendDocument:', msg);
-                    const data2 = await postToTelegram(url2, fd2, 'sendDocument', 60000, 2);
-                    const id2Obj = getFileId(data2);
-                    if (!id2Obj || !id2Obj.file_id) throw new Error('Failed to get file ID');
-                    results.push({ src: `/file/${id2Obj.file_id}.${ext || 'jpg'}` });
-                    await putMeta(id2Obj.file_id, ext || 'jpg', mime, env, id2Obj.thumbnail_id);
-                } else {
-                    throw e;
-                }
-            }
-        } else if (mediaCandidates.length >= 2) {
-            // 按批次（最多 10 个）调用 sendMediaGroup
-            const batches = chunk(mediaCandidates, 10);
-            for (const batch of batches) {
+            // 处理媒体候选：
+            // - 若仅 1 个媒体：分别用 sendPhoto / sendVideo
+            // - 若 >= 2 个：按 10 个为一批使用 sendMediaGroup
+            if (mediaCandidates.length === 1) {
+                const { file, kind, ext, mime } = mediaCandidates[0];
                 const fd = new FormData();
                 fd.append('chat_id', env.TG_Chat_ID);
-                const media = [];
-                batch.forEach((item, idx) => {
-                    const attachName = `file${idx}`;
-                    media.push({ type: item.kind, media: `attach://${attachName}` });
-                    fd.append(attachName, item.file);
-                });
-                fd.append('media', JSON.stringify(media));
+                const endpoint = kind === 'photo' ? 'sendPhoto' : 'sendVideo';
+                const field = kind === 'photo' ? 'photo' : 'video';
+                fd.append(field, file);
 
-                const url = `https://api.telegram.org/bot${env.TG_Bot_Token}/sendMediaGroup`;
+                const url = `https://api.telegram.org/bot${env.TG_Bot_Token}/${endpoint}`;
                 console.log('Sending request to:', url);
                 try {
-                    const data = await postToTelegram(url, fd, 'sendMediaGroup', 60000, 2);
-                    const ids = getFileIdsFromGroup(data);
-                    if (!ids.length) throw new Error('Failed to get file IDs from media group');
-                    // 将批次内的 id 与各自扩展名对应，顺序与 batch 一致
-                    for (let i = 0; i < ids.length; i++) {
-                        const id = ids[i];
-                        const ext = batch[i]?.ext || 'jpg';
-                        const mime = batch[i]?.mime || '';
-                        // For media groups, Telegram API does not directly provide thumbnail_id for each item in the response.
-                        // If we need thumbnails for media groups, we might need to fetch them separately for each media item ID.
-                        results.push({ src: `/file/${id}.${ext}` });
-                        await putMeta(id, ext, mime, env);
-                    }
+                    const data = await postToTelegram(url, fd, endpoint, 60000, 2);
+                    const idObj = getFileId(data);
+                    if (!idObj || !idObj.file_id) throw new Error('Failed to get file ID');
+                    results.push({ src: `/file/${idObj.file_id}.${ext}` });
+                    await putMeta(idObj.file_id, ext, mime, env, idObj.thumbnail_id);
                 } catch (e) {
                     const msg = String(e && e.message ? e.message : e);
-                    // 若相册发送出现 IMAGE_PROCESS_FAILED，则逐个回退为 document 发送
-                    if (msg.includes('IMAGE_PROCESS_FAILED')) {
-                        console.warn('sendMediaGroup 失败，改为逐个 sendDocument:', msg);
-                        for (const it of batch) {
-                            const fd2 = new FormData();
-                            fd2.append('chat_id', env.TG_Chat_ID);
-                            fd2.append('document', it.file);
-                            const url2 = `https://api.telegram.org/bot${env.TG_Bot_Token}/sendDocument`;
-                            const data2 = await postToTelegram(url2, fd2, 'sendDocument', 60000, 2);
-                            const id2Obj = getFileId(data2);
-                            if (!id2Obj || !id2Obj.file_id) throw new Error('Failed to get file ID');
-                            const ext2 = it.ext || 'jpg';
-                            results.push({ src: `/file/${id2Obj.file_id}.${ext2}` });
-                            await putMeta(id2Obj.file_id, ext2, it.mime || '', env, id2Obj.thumbnail_id);
-                        }
+                    // 单媒体失败时，对图片回退为 document 再试
+                    if (kind === 'photo' && msg.includes('IMAGE_PROCESS_FAILED')) {
+                        const fd2 = new FormData();
+                        fd2.append('chat_id', env.TG_Chat_ID);
+                        fd2.append('document', file);
+                        const url2 = `https://api.telegram.org/bot${env.TG_Bot_Token}/sendDocument`;
+                        console.warn('sendPhoto 失败，回退 sendDocument:', msg);
+                        const data2 = await postToTelegram(url2, fd2, 'sendDocument', 60000, 2);
+                        const id2Obj = getFileId(data2);
+                        if (!id2Obj || !id2Obj.file_id) throw new Error('Failed to get file ID');
+                        results.push({ src: `/file/${id2Obj.file_id}.${ext || 'jpg'}` });
+                        await putMeta(id2Obj.file_id, ext || 'jpg', mime, env, id2Obj.thumbnail_id);
                     } else {
                         throw e;
                     }
                 }
-            }
-        }
+            } else if (mediaCandidates.length >= 2) {
+                const batches = chunk(mediaCandidates, 10);
+                for (const batch of batches) {
+                    const fd = new FormData();
+                    fd.append('chat_id', env.TG_Chat_ID);
+                    const media = [];
+                    batch.forEach((item, idx) => {
+                        const attachName = `file${idx}`;
+                        media.push({ type: item.kind, media: `attach://${attachName}` });
+                        fd.append(attachName, item.file);
+                    });
+                    fd.append('media', JSON.stringify(media));
 
-        // 非媒体（或不在相册里的）作为 document 单独发送
-        for (const doc of documents) {
-            const fd = new FormData();
-            fd.append('chat_id', env.TG_Chat_ID);
-            fd.append('document', doc.file);
-            const url = `https://api.telegram.org/bot${env.TG_Bot_Token}/sendDocument`;
-            console.log('Sending request to:', url);
-            const data = await postToTelegram(url, fd, 'sendDocument', 60000, 2);
-            const idObj = getFileId(data);
-            if (!idObj || !idObj.file_id) throw new Error('Failed to get file ID');
-            const ext = doc.ext || 'bin';
-            results.push({ src: `/file/${idObj.file_id}.${ext}` });
-            await putMeta(idObj.file_id, ext, doc.mime || '', env, idObj.thumbnail_id);
-        }
+                    const url = `https://api.telegram.org/bot${env.TG_Bot_Token}/sendMediaGroup`;
+                    console.log('Sending request to:', url);
+                    try {
+                        const data = await postToTelegram(url, fd, 'sendMediaGroup', 60000, 2);
+                        const ids = getFileIdsFromGroup(data);
+                        if (!ids.length) throw new Error('Failed to get file IDs from media group');
+                        for (let i = 0; i < ids.length; i++) {
+                            const id = ids[i];
+                            const ext = batch[i]?.ext || 'jpg';
+                            const mime = batch[i]?.mime || '';
+                            results.push({ src: `/file/${id}.${ext}` });
+                            await putMeta(id, ext, mime, env);
+                        }
+                    } catch (e) {
+                        const msg = String(e && e.message ? e.message : e);
+                        if (msg.includes('IMAGE_PROCESS_FAILED')) {
+                            console.warn('sendMediaGroup 失败，改为逐个 sendDocument:', msg);
+                            for (const it of batch) {
+                                const fd2 = new FormData();
+                                fd2.append('chat_id', env.TG_Chat_ID);
+                                fd2.append('document', it.file);
+                                const url2 = `https://api.telegram.org/bot${env.TG_Bot_Token}/sendDocument`;
+                                console.warn('sendMediaGroup 失败，回退 sendDocument:', msg);
+                                const data2 = await postToTelegram(url2, fd2, 'sendDocument', 60000, 2);
+                                const id2Obj = getFileId(data2);
+                                if (!id2Obj || !id2Obj.file_id) throw new Error('Failed to get file ID');
+                                const ext2 = it.ext || 'jpg';
+                                results.push({ src: `/file/${id2Obj.file_id}.${ext2}` });
+                                await putMeta(id2Obj.file_id, ext2, it.mime || '', env, id2Obj.thumbnail_id);
+                            }
+                        } else {
+                            throw e;
+                        }
+                    }
+                }
+            }
 
-        // 统一返回 { urls: [...] }，便于前端批量解析
-        return new Response(
-            JSON.stringify({ urls: results.map(r => r.src) }),
-            {
-                status: 200,
-                headers: { 'Content-Type': 'application/json' }
+            for (const doc of documents) {
+                const fd = new FormData();
+                fd.append('chat_id', env.TG_Chat_ID);
+                fd.append('document', doc.file);
+                const url = `https://api.telegram.org/bot${env.TG_Bot_Token}/sendDocument`;
+                console.log('Sending request to:', url);
+                const data = await postToTelegram(url, fd, 'sendDocument', 60000, 2);
+                const idObj = getFileId(data);
+                if (!idObj || !idObj.file_id) throw new Error('Failed to get file ID');
+                const ext = doc.ext || 'bin';
+                results.push({ src: `/file/${idObj.file_id}.${ext}` });
+                await putMeta(idObj.file_id, ext, doc.mime || '', env, idObj.thumbnail_id);
             }
-        );
-    } catch (error) {
-        console.error('Upload error:', error);
-        return new Response(
-            JSON.stringify({ error: error.message }),
-            {
-                status: 500,
-                headers: { 'Content-Type': 'application/json' }
-            }
-        );
+
+            // 统一返回 { urls: [...] }，便于前端批量解析
+            return new Response(
+                JSON.stringify({ urls: results.map(r => r.src) }),
+                {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' }
+                }
+            );
+        } catch (error) {
+            console.error('Upload error:', error);
+            return new Response(
+                JSON.stringify({ error: error.message }),
+                {
+                    status: 500,
+                    headers: { 'Content-Type': 'application/json' }
+                }
+            );
+        }
     }
 }
 
@@ -469,7 +464,7 @@ export async function onRequestPut(context) {
                     console.log('Sending request to:', url);
                     try {
                         const data = await postToTelegram(url, fd, 'sendMediaGroup', 60000, 2);
-                        const ids = getFileIdsFromGroup(data); // Note: getFileIdsFromGroup doesn't return thumbnail IDs yet
+                        const ids = getFileIdsFromGroup(data);
                         if (!ids.length) throw new Error('Failed to get file IDs from media group');
                         for (let i = 0; i < ids.length; i++) {
                             const id = ids[i];
@@ -529,6 +524,164 @@ export async function onRequestPut(context) {
                 }
             );
         } catch (error) {
+            console.error('Final upload error:', error);
+            return new Response(
+                JSON.stringify({ error: error.message }),
+                {
+                    status: 500,
+                    headers: { 'Content-Type': 'application/json' }
+                }
+            );
+        }
+    } else {
+        try {
+
+            const clonedRequest = request.clone();
+            const formData = await clonedRequest.formData();
+
+            // 同时兼容单文件与多文件：读取所有名为 file 的表单域
+            const files = formData.getAll('file') || [];
+            if (!files.length) {
+                throw new Error('No file uploaded');
+            }
+
+            const results = [];
+
+            // 将文件按类型拆分：图片 / 视频 作为媒体组候选；其他作为文档单发
+            const mediaCandidates = []; // { file, kind: 'photo' | 'video', ext, mime }
+            const documents = []; // { file, ext, mime }
+
+            for (const f of files) {
+                const name = f.name || 'file';
+                const ext = (name.includes('.') ? name.split('.').pop() : '').toLowerCase();
+                const type = f.type || '';
+                const size = typeof f.size === 'number' ? f.size : 0;
+                // 对于 Telegram 容易处理失败的图片格式或较大的图片，直接走 document 提高成功率
+                const hardImageAsDoc = ['heic', 'heif', 'webp', 'ico'].includes(ext) || size > 5 * 1024 * 1024; // >5MB 走 document
+                if (type.startsWith('image/')) {
+                    if (hardImageAsDoc) {
+                        documents.push({ file: f, ext: ext || 'jpg', mime: type });
+                    } else {
+                        mediaCandidates.push({ file: f, kind: 'photo', ext, mime: type });
+                    }
+                }
+                else if (type.startsWith('video/')) {
+                    mediaCandidates.push({ file: f, kind: 'video', ext, mime: type });
+                } else {
+                    documents.push({ file: f, ext, mime: type });
+                }
+            }
+
+            // 处理媒体候选：
+            // - 若仅 1 个媒体：分别用 sendPhoto / sendVideo
+            // - 若 >= 2 个：按 10 个为一批使用 sendMediaGroup
+            if (mediaCandidates.length === 1) {
+                const { file, kind, ext, mime } = mediaCandidates[0];
+                const fd = new FormData();
+                fd.append('chat_id', env.TG_Chat_ID);
+                const endpoint = kind === 'photo' ? 'sendPhoto' : 'sendVideo';
+                const field = kind === 'photo' ? 'photo' : 'video';
+                fd.append(field, file);
+
+                const url = `https://api.telegram.org/bot${env.TG_Bot_Token}/${endpoint}`;
+                console.log('Sending request to:', url);
+                try {
+                    const data = await postToTelegram(url, fd, endpoint, 60000, 2);
+                    const idObj = getFileId(data);
+                    if (!idObj || !idObj.file_id) throw new Error('Failed to get file ID');
+                    results.push({ src: `/file/${idObj.file_id}.${ext}` });
+                    await putMeta(idObj.file_id, ext, mime, env, idObj.thumbnail_id);
+                } catch (e) {
+                    const msg = String(e && e.message ? e.message : e);
+                    // 单媒体失败时，对图片回退为 document 再试
+                    if (kind === 'photo' && msg.includes('IMAGE_PROCESS_FAILED')) {
+                        const fd2 = new FormData();
+                        fd2.append('chat_id', env.TG_Chat_ID);
+                        fd2.append('document', file);
+                        const url2 = `https://api.telegram.org/bot${env.TG_Bot_Token}/sendDocument`;
+                        console.warn('sendPhoto 失败，回退 sendDocument:', msg);
+                        const data2 = await postToTelegram(url2, fd2, 'sendDocument', 60000, 2);
+                        const id2Obj = getFileId(data2);
+                        if (!id2Obj || !id2Obj.file_id) throw new Error('Failed to get file ID');
+                        results.push({ src: `/file/${id2Obj.file_id}.${ext || 'jpg'}` });
+                        await putMeta(id2Obj.file_id, ext || 'jpg', mime, env, id2Obj.thumbnail_id);
+                    } else {
+                        throw e;
+                    }
+                }
+            } else if (mediaCandidates.length >= 2) {
+                const batches = chunk(mediaCandidates, 10);
+                for (const batch of batches) {
+                    const fd = new FormData();
+                    fd.append('chat_id', env.TG_Chat_ID);
+                    const media = [];
+                    batch.forEach((item, idx) => {
+                        const attachName = `file${idx}`;
+                        media.push({ type: item.kind, media: `attach://${attachName}` });
+                        fd.append(attachName, item.file);
+                    });
+                    fd.append('media', JSON.stringify(media));
+
+                    const url = `https://api.telegram.org/bot${env.TG_Bot_Token}/sendMediaGroup`;
+                    console.log('Sending request to:', url);
+                    try {
+                        const data = await postToTelegram(url, fd, 'sendMediaGroup', 60000, 2);
+                        const ids = getFileIdsFromGroup(data);
+                        if (!ids.length) throw new Error('Failed to get file IDs from media group');
+                        for (let i = 0; i < ids.length; i++) {
+                            const id = ids[i];
+                            const ext = batch[i]?.ext || 'jpg';
+                            const mime = batch[i]?.mime || '';
+                            results.push({ src: `/file/${id}.${ext}` });
+                            await putMeta(id, ext, mime, env);
+                        }
+                    } catch (e) {
+                        const msg = String(e && e.message ? e.message : e);
+                        if (msg.includes('IMAGE_PROCESS_FAILED')) {
+                            console.warn('sendMediaGroup 失败，改为逐个 sendDocument:', msg);
+                            for (const it of batch) {
+                                const fd2 = new FormData();
+                                fd2.append('chat_id', env.TG_Chat_ID);
+                                fd2.append('document', it.file);
+                                const url2 = `https://api.telegram.org/bot${env.TG_Bot_Token}/sendDocument`;
+                                console.warn('sendMediaGroup 失败，回退 sendDocument:', msg);
+                                const data2 = await postToTelegram(url2, fd2, 'sendDocument', 60000, 2);
+                                const id2Obj = getFileId(data2);
+                                if (!id2Obj || !id2Obj.file_id) throw new Error('Failed to get file ID');
+                                const ext2 = it.ext || 'jpg';
+                                results.push({ src: `/file/${id2Obj.file_id}.${ext2}` });
+                                await putMeta(id2Obj.file_id, ext2, it.mime || '', env, id2Obj.thumbnail_id);
+                            }
+                        } else {
+                            throw e;
+                        }
+                    }
+                }
+            }
+
+            for (const doc of documents) {
+                const fd = new FormData();
+                fd.append('chat_id', env.TG_Chat_ID);
+                fd.append('document', doc.file);
+                const url = `https://api.telegram.org/bot${env.TG_Bot_Token}/sendDocument`;
+                console.log('Sending request to:', url);
+                const data = await postToTelegram(url, fd, 'sendDocument', 60000, 2);
+                const idObj = getFileId(data);
+                if (!idObj || !idObj.file_id) throw new Error('Failed to get file ID');
+                const ext = doc.ext || 'bin';
+                results.push({ src: `/file/${idObj.file_id}.${ext}` });
+                await putMeta(idObj.file_id, ext, doc.mime || '', env, idObj.thumbnail_id);
+            }
+
+            // 统一返回 { urls: [...] }，便于前端批量解析
+            return new Response(
+                JSON.stringify({ urls: results.map(r => r.src) }),
+                {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' }
+                }
+            );
+        } catch (error) {
             console.error('Upload error:', error);
             return new Response(
                 JSON.stringify({ error: error.message }),
@@ -538,169 +691,6 @@ export async function onRequestPut(context) {
                 }
             );
         }
-    }
-
-    try {
-
-        const clonedRequest = request.clone();
-        const formData = await clonedRequest.formData();
-
-        // 同时兼容单文件与多文件：读取所有名为 file 的表单域
-        const files = formData.getAll('file') || [];
-        if (!files.length) {
-            throw new Error('No file uploaded');
-        }
-
-        const results = [];
-
-        // 将文件按类型拆分：图片 / 视频 作为媒体组候选；其他作为文档单发
-        const mediaCandidates = []; // { file, kind: 'photo' | 'video', ext, mime }
-        const documents = []; // { file, ext, mime }
-
-        for (const f of files) {
-            const name = f.name || 'file';
-            const ext = (name.includes('.') ? name.split('.').pop() : '').toLowerCase();
-            const type = f.type || '';
-            const size = typeof f.size === 'number' ? f.size : 0;
-            // 对于 Telegram 容易处理失败的图片格式或较大的图片，直接走 document 提高成功率
-            const hardImageAsDoc = ['heic', 'heif', 'webp', 'ico'].includes(ext) || size > 5 * 1024 * 1024; // >5MB 走 document
-            if (type.startsWith('image/')) {
-                if (hardImageAsDoc) {
-                    documents.push({ file: f, ext: ext || 'jpg', mime: type });
-                } else {
-                    mediaCandidates.push({ file: f, kind: 'photo', ext, mime: type });
-                }
-            }
-            else if (type.startsWith('video/')) {
-                mediaCandidates.push({ file: f, kind: 'video', ext, mime: type });
-            } else {
-                documents.push({ file: f, ext, mime: type });
-            }
-        }
-
-        // 处理媒体候选：
-        // - 若仅 1 个媒体：分别用 sendPhoto / sendVideo
-        // - 若 >= 2 个：按 10 个为一批使用 sendMediaGroup
-        if (mediaCandidates.length === 1) {
-            const { file, kind, ext, mime } = mediaCandidates[0];
-            const fd = new FormData();
-            fd.append('chat_id', env.TG_Chat_ID);
-            const endpoint = kind === 'photo' ? 'sendPhoto' : 'sendVideo';
-            const field = kind === 'photo' ? 'photo' : 'video';
-            fd.append(field, file);
-
-            const url = `https://api.telegram.org/bot${env.TG_Bot_Token}/${endpoint}`;
-            console.log('Sending request to:', url);
-            try {
-                const data = await postToTelegram(url, fd, endpoint, 60000, 2);
-                const idObj = getFileId(data);
-                if (!idObj || !idObj.file_id) throw new Error('Failed to get file ID');
-                results.push({ src: `/file/${idObj.file_id}.${ext}` });
-                await putMeta(idObj.file_id, ext, mime, env, idObj.thumbnail_id);
-            } catch (e) {
-                const msg = String(e && e.message ? e.message : e);
-                // 单媒体失败时，对图片回退为 document 再试
-                if (kind === 'photo' && msg.includes('IMAGE_PROCESS_FAILED')) {
-                    const fd2 = new FormData();
-                    fd2.append('chat_id', env.TG_Chat_ID);
-                    fd2.append('document', file);
-                    const url2 = `https://api.telegram.org/bot${env.TG_Bot_Token}/sendDocument`;
-                    console.warn('sendPhoto 失败，回退 sendDocument:', msg);
-                    const data2 = await postToTelegram(url2, fd2, 'sendDocument', 60000, 2);
-                    const id2Obj = getFileId(data2);
-                    if (!id2Obj || !id2Obj.file_id) throw new Error('Failed to get file ID');
-                    results.push({ src: `/file/${id2Obj.file_id}.${ext || 'jpg'}` });
-                    await putMeta(id2Obj.file_id, ext || 'jpg', mime, env, id2Obj.thumbnail_id);
-                } else {
-                    throw e;
-                }
-            }
-        } else if (mediaCandidates.length >= 2) {
-            // 按批次（最多 10 个）调用 sendMediaGroup
-            const batches = chunk(mediaCandidates, 10);
-            for (const batch of batches) {
-                const fd = new FormData();
-                fd.append('chat_id', env.TG_Chat_ID);
-                const media = [];
-                batch.forEach((item, idx) => {
-                    const attachName = `file${idx}`;
-                    media.push({ type: item.kind, media: `attach://${attachName}` });
-                    fd.append(attachName, item.file);
-                });
-                fd.append('media', JSON.stringify(media));
-
-                const url = `https://api.telegram.org/bot${env.TG_Bot_Token}/sendMediaGroup`;
-                console.log('Sending request to:', url);
-                try {
-                    const data = await postToTelegram(url, fd, 'sendMediaGroup', 60000, 2);
-                    const ids = getFileIdsFromGroup(data);
-                    if (!ids.length) throw new Error('Failed to get file IDs from media group');
-                    // 将批次内的 id 与各自扩展名对应，顺序与 batch 一致
-                    for (let i = 0; i < ids.length; i++) {
-                        const id = ids[i];
-                        const ext = batch[i]?.ext || 'jpg';
-                        const mime = batch[i]?.mime || '';
-                        // For media groups, Telegram API does not directly provide thumbnail_id for each item in the response.
-                        // If we need thumbnails for media groups, we might need to fetch them separately for each media item ID.
-                        results.push({ src: `/file/${id}.${ext}` });
-                        await putMeta(id, ext, mime, env);
-                    }
-                } catch (e) {
-                    const msg = String(e && e.message ? e.message : e);
-                    // 若相册发送出现 IMAGE_PROCESS_FAILED，则逐个回退为 document 发送
-                    if (msg.includes('IMAGE_PROCESS_FAILED')) {
-                        console.warn('sendMediaGroup 失败，改为逐个 sendDocument:', msg);
-                        for (const it of batch) {
-                            const fd2 = new FormData();
-                            fd2.append('chat_id', env.TG_Chat_ID);
-                            fd2.append('document', it.file);
-                            const url2 = `https://api.telegram.org/bot${env.TG_Bot_Token}/sendDocument`;
-                            const data2 = await postToTelegram(url2, fd2, 'sendDocument', 60000, 2);
-                            const id2Obj = getFileId(data2);
-                            if (!id2Obj || !id2Obj.file_id) throw new Error('Failed to get file ID');
-                            const ext2 = it.ext || 'jpg';
-                            results.push({ src: `/file/${id2Obj.file_id}.${ext2}` });
-                            await putMeta(id2Obj.file_id, ext2, it.mime || '', env, id2Obj.thumbnail_id);
-                        }
-                    } else {
-                        throw e;
-                    }
-                }
-            }
-        }
-
-        // 非媒体（或不在相册里的）作为 document 单独发送
-        for (const doc of documents) {
-            const fd = new FormData();
-            fd.append('chat_id', env.TG_Chat_ID);
-            fd.append('document', doc.file);
-            const url = `https://api.telegram.org/bot${env.TG_Bot_Token}/sendDocument`;
-            console.log('Sending request to:', url);
-            const data = await postToTelegram(url, fd, 'sendDocument', 60000, 2);
-            const idObj = getFileId(data);
-            if (!idObj || !idObj.file_id) throw new Error('Failed to get file ID');
-            const ext = doc.ext || 'bin';
-            results.push({ src: `/file/${idObj.file_id}.${ext}` });
-            await putMeta(idObj.file_id, ext, doc.mime || '', env, idObj.thumbnail_id);
-        }
-
-        // 统一返回 { urls: [...] }，便于前端批量解析
-        return new Response(
-            JSON.stringify({ urls: results.map(r => r.src) }),
-            {
-                status: 200,
-                headers: { 'Content-Type': 'application/json' }
-            }
-        );
-    } catch (error) {
-        console.error('Upload error:', error);
-        return new Response(
-            JSON.stringify({ error: error.message }),
-            {
-                status: 500,
-                headers: { 'Content-Type': 'application/json' }
-            }
-        );
     }
 }
 
