@@ -98,6 +98,8 @@ export async function onRequest(context) {
   // If the response is OK, proceed with further checks
   if (response.ok) {
     const headers = new Headers(response.headers);
+    // 移除可能存在的 Content-Disposition 头，确保我们能完全控制它
+    headers.delete("Content-Disposition");
     // 强制浏览器内联预览而不是下载
     headers.set("Content-Disposition", `inline; filename="${downloadFilename}"`);
     headers.set("Content-Type", contentType);

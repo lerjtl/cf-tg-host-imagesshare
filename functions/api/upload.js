@@ -369,15 +369,22 @@ function getFileId(response) {
     let thumbnailId = null;
 
     if (result.photo) {
+        // 对于照片，Telegram 会返回一个尺寸数组，选择最大的作为 file_id
         fileId = result.photo.reduce((prev, current) =>
             (prev.file_size > current.file_size) ? prev : current
         ).file_id;
-        console.log('getFileId: Found photo file_id:', fileId);
+        // 对于照片，Telegram 不会提供单独的 thumbnailId，通常前端会用较小尺寸的 photo 作为缩略图。
+        // 为保持一致性，我们选择最小的尺寸作为 thumbnailId。
+        thumbnailId = result.photo.reduce((prev, current) =>
+            (prev.file_size < current.file_size) ? prev : current
+        ).file_id; // Use smallest photo as thumbnail ID
+        console.log('getFileId: Found photo file_id:', fileId, 'thumbnailId:', thumbnailId);
     }
     if (result.document) {
         fileId = result.document.file_id;
         console.log('getFileId: Found document file_id:', fileId);
-        if (result.document.thumbnail) {
+        // 确保 thumbnail 存在且有 file_id
+        if (result.document.thumbnail && result.document.thumbnail.file_id) {
             thumbnailId = result.document.thumbnail.file_id;
             console.log('getFileId: Found document thumbnail_id:', thumbnailId);
         }
@@ -385,7 +392,8 @@ function getFileId(response) {
     if (result.video) {
         fileId = result.video.file_id;
         console.log('getFileId: Found video file_id:', fileId);
-        if (result.video.thumbnail) {
+        // 确保 thumbnail 存在且有 file_id
+        if (result.video.thumbnail && result.video.thumbnail.file_id) {
             thumbnailId = result.video.thumbnail.file_id;
             console.log('getFileId: Found video thumbnail_id:', thumbnailId);
         }
@@ -393,6 +401,11 @@ function getFileId(response) {
     if (result.sticker) {
         fileId = result.sticker.file_id;
         console.log('getFileId: Found sticker file_id:', fileId);
+        // Sticker 也可以有缩略图
+        if (result.sticker.thumbnail && result.sticker.thumbnail.file_id) {
+            thumbnailId = result.sticker.thumbnail.file_id;
+            console.log('getFileId: Found sticker thumbnail_id:', thumbnailId);
+        }
     }
 
     if (!fileId) {
@@ -417,16 +430,22 @@ function getFileIdsFromGroup(response) {
             thumbnailId = smallestPhoto.file_id; // Using smallest photo as thumbnail ID
         } else if (msg.video && msg.video.file_id) {
             fileId = msg.video.file_id;
-            if (msg.video.thumbnail) {
+            // 确保 thumbnail 存在且有 file_id
+            if (msg.video.thumbnail && msg.video.thumbnail.file_id) {
                 thumbnailId = msg.video.thumbnail.file_id;
             }
         } else if (msg.document && msg.document.file_id) {
             fileId = msg.document.file_id;
-            if (msg.document.thumbnail) {
+            // 确保 thumbnail 存在且有 file_id
+            if (msg.document.thumbnail && msg.document.thumbnail.file_id) {
                 thumbnailId = msg.document.thumbnail.file_id;
             }
         } else if (msg.sticker && msg.sticker.file_id) {
             fileId = msg.sticker.file_id;
+            // Sticker 也可以有缩略图
+            if (msg.sticker.thumbnail && msg.sticker.thumbnail.file_id) {
+                thumbnailId = msg.sticker.thumbnail.file_id;
+            }
         }
         if (fileId) {
             ids.push({ file_id: fileId, thumbnail_id: thumbnailId });
@@ -475,8 +494,8 @@ async function postToTelegram(url, formData, label, timeoutMs = 60000, retries =
                 console.error('Telegram API response data.ok is false:', data);
                 throw new Error(data.description || 'Telegram API error: ' + JSON.stringify(data));
             }
-            // 仅对 5xx/429 进行重试
-            if (attempt < retries && (resp.status >= 500 || resp.status === 429)) {
+            // 仅对 5xx/429/503 进行重试
+            if (attempt < retries && (resp.status >= 500 || resp.status === 429 || resp.status === 503)) {
                 console.warn(`[retry] ${label} 响应 ${resp.status}，${delay}ms 后重试（第 ${attempt + 1} 次）`);
                 await new Promise(r => setTimeout(r, delay));
                 attempt += 1;
@@ -488,7 +507,7 @@ async function postToTelegram(url, formData, label, timeoutMs = 60000, retries =
         } catch (err) {
             // 对超时/网络错误重试
             const msg = String(err && err.message ? err.message : err);
-            if (attempt < retries && (msg.includes('超时') || msg.includes('network') || msg.includes('aborted'))) {
+            if (attempt < retries && (msg.includes('超时') || msg.includes('network') || msg.includes('aborted') || msg.includes('503'))) {
                 console.warn(`[retry] ${label} ${msg}，${delay}ms 后重试（第 ${attempt + 1} 次）`);
                 await new Promise(r => setTimeout(r, delay));
                 attempt += 1;
