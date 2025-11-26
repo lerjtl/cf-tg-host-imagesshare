@@ -23,7 +23,7 @@ export default function Home() {
     resultUrl?: string
   }
   const [queue, setQueue] = useState<QueueItem[]>([])
-  const hasActiveUpload = queue.some(it => it.status === 'uploading')
+  const [hasActiveUpload, setHasActiveUpload] = useState(false)
   const hasError = queue.some(it => it.status === 'error')
   
   // 计算整体进度
@@ -95,56 +95,74 @@ export default function Home() {
     return () => window.removeEventListener('beforeunload', handler)
   }, [hasActiveUpload])
 
-  const startBatchUpload = (items: QueueItem[]) => {
-    if (!items.length) return
-    const ids = new Set(items.map(i => i.id))
-    // 标记为上传中
-    setQueue(prev => prev.map(i => ids.has(i.id) ? { ...i, status: 'uploading', progress: 0, target: 5 } : i))
-    
-    // 平滑缓动：每 120ms 将 progress 向 target 缓慢逼近；同时 target 若较低，缓慢抬升至 60%
-    const interval = window.setInterval(() => {
-      setQueue(prev => prev.map(it => {
-        if (!ids.has(it.id)) return it
-        const curTarget = Math.max(it.target ?? 0, Math.min(60, (it.target ?? 0) + 1))
-        const diff = curTarget - (it.progress ?? 0)
-        if (diff > 0) {
-          const step = Math.max(1, Math.ceil(diff * 0.12))
-          return { ...it, target: curTarget, progress: Math.min(curTarget, (it.progress ?? 0) + step) }
+  const startBatchUpload = async (items: QueueItem[]) => {
+    if (!items.length) return;
+    setHasActiveUpload(true);
+    const ids = new Set(items.map((it) => it.id));
+
+    const uploadPromises = items.map(async (item) => {
+      let interval: number | undefined;
+      const updateProgress = (p: UploadProgress) => {
+        const percent = Math.round(p.percent);
+        setQueue((prev) =>
+          prev.map((it) =>
+            it.id === item.id ? { ...it, target: Math.min(percent, 80) } : it
+          )
+        );
+      };
+
+      try {
+        interval = window.setInterval(() => {
+          setQueue((prev) =>
+            prev.map((it) =>
+              it.id === item.id
+                ? { ...it, progress: Math.min(it.progress + 1, it.target) }
+                : it
+            )
+          );
+        }, 100);
+
+        const result = await uploadWithProgress(item.file, updateProgress);
+
+        const urls: string[] = Array.isArray(result?.urls)
+          ? result.urls
+          : result?.url
+          ? [result.url]
+          : [];
+        const u = urls[0] || ""; // Assuming single file upload returns one URL
+        const full = u ? (u.startsWith("http") ? u : `${location.origin}${u}`) : "";
+
+        setQueue((prev) =>
+          prev.map((it) =>
+            it.id === item.id
+              ? { ...it, target: 100, status: "done", resultUrl: full || it.resultUrl }
+              : it
+          )
+        );
+      } catch (error: any) {
+        setQueue((prev) =>
+          prev.map((it) =>
+            it.id === item.id
+              ? {
+                  ...it,
+                  status: "error",
+                  timer: undefined,
+                  error: error.message || "上传失败",
+                }
+              : it
+          )
+        );
+        enqueueToast(`上传失败：${error.message || "未知错误"}，请重新选择文件再试`, "error");
+      } finally {
+        if (interval) {
+          window.clearInterval(interval);
         }
-        return { ...it, target: curTarget }
-      }))
-    }, 120)
-    // 记录 timer 到该批次的每个条目
-    setQueue(prev => prev.map(it => ids.has(it.id) ? { ...it, timer: interval } : it))
+      }
+    });
 
-
-    // 使用 uploadWithProgress 方法
-    const files = items.map(item => item.file)
-    uploadWithProgress(files, (progress) => {
-      const percent = Math.round(progress.percent)
-      setQueue(prev => prev.map(it => ids.has(it.id) ? { ...it, target: Math.min(percent, 80) } : it))
-    }).then((result) => {
-      const urls: string[] = Array.isArray(result?.urls) ? result.urls : (result?.url ? [result.url] : [])
-      // 构建 id -> 完整 URL 映射
-      const urlMap = new Map<string, string>()
-      items.forEach((it, idx) => {
-        const u = urls[idx] || urls[0] || ''
-        const full = u ? (u.startsWith('http') ? u : `${location.origin}${u}`) : ''
-        if (full) urlMap.set(it.id, full)
-      })
-      // 写回每个条目的完成状态与 resultUrl
-      setQueue(prev => prev.map(it => ids.has(it.id)
-        ? { ...it, target: 100, status: 'done', resultUrl: urlMap.get(it.id) || it.resultUrl }
-        : it
-      ))
-      // 停止进度动画
-      window.clearInterval(interval)
-    }).catch((error) => {
-      window.clearInterval(interval)
-      setQueue(prev => prev.map(it => ids.has(it.id) ? { ...it, status: 'error', timer: undefined, error: error.message || '上传失败' } : it))
-      enqueueToast(`上传失败：${error.message || '未知错误'}，请重新选择文件再试`, 'error')
-    })
-  }
+    await Promise.all(uploadPromises);
+    setHasActiveUpload(false);
+  };
 
   const enqueueAndUpload = (files: File[]) => {
     if (!files.length) return
