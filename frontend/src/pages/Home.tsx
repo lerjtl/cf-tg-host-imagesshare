@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
-import { logout, uploadWithProgress } from '../lib/api'
+import { logout, uploadWithProgress, UploadProgress } from '../lib/api'
 import Toast from '../components/Toast'
 
 
@@ -105,20 +105,24 @@ export default function Home() {
       const updateProgress = (p: UploadProgress) => {
         const percent = Math.round(p.percent);
         setQueue((prev) =>
-          prev.map((it) =>
-            it.id === item.id ? { ...it, target: Math.min(percent, 80) } : it
-          )
+          prev.map((it) => {
+            const currentTarget = it.target !== undefined ? it.target : 0; // Provide a default value for target
+            return it.id === item.id
+              ? { ...it, target: Math.min(percent, 80) }
+              : it;
+          })
         );
       };
 
       try {
         interval = window.setInterval(() => {
           setQueue((prev) =>
-            prev.map((it) =>
-              it.id === item.id
-                ? { ...it, progress: Math.min(it.progress + 1, it.target) }
-                : it
-            )
+            prev.map((it) => {
+              const currentTarget = it.target !== undefined ? it.target : 0; // Provide a default value for target
+              return it.id === item.id
+                ? { ...it, progress: Math.min(it.progress + 1, currentTarget) }
+                : it;
+            })
           );
         }, 100);
 
