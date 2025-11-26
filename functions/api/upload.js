@@ -391,7 +391,15 @@ function getFileId(response) {
     }
     if (result.document) {
         console.log('getFileId: Found document file_id:', result.document.file_id);
-        return { file_id: result.document.file_id, thumbnail_id: null };
+        let thumbnailId = null;
+        if (result.document.thumbnail && Array.isArray(result.document.thumbnail) && result.document.thumbnail.length) {
+            const bestThumbnail = result.document.thumbnail.reduce((prev, current) =>
+                (prev.file_size > current.file_size) ? prev : current
+            );
+            thumbnailId = bestThumbnail.file_id;
+            console.log('getFileId: Found document thumbnail_id:', thumbnailId);
+        }
+        return { file_id: result.document.file_id, thumbnail_id: thumbnailId };
     }
     if (result.video) {
         console.log('getFileId: Found video file_id:', result.video.file_id);
