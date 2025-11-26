@@ -217,7 +217,144 @@ export default function Gallery() {
       </div>
 
       <main className="min-h-svh max-w-7xl mx-auto px-5 py-16">
-        <div>这是一个临时内容</div>
+        {msg && <div className="mb-3 text-sm text-red-500">{msg}</div>}
+
+        {/* 头部区域：文件列表标题和清除数据按钮 */}
+        <div className="flex justify-between items-center mb-4">
+          <h1 className="text-2xl font-bold">文件列表</h1>
+          <button
+            onClick={handleClearData}
+            aria-label="清除所有数据"
+            title="清除所有数据"
+            className="inline-flex items-center justify-center h-8 w-8 rounded-full hover:bg-red-50 text-red-700"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              className="h-5 w-5"
+            >
+              <path
+                d="M3 6h18"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              ></path>
+              <path
+                d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              ></path>
+              <path
+                d="M10 11v6"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              ></path>
+              <path
+                d="M14 11v6"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              ></path>
+            </svg>
+          </button>
+        </div>
+
+        {items.length === 0 && initialized ? (
+          <div className="flex flex-col items-center justify-center py-20 text-center">
+            <div className="mb-4 p-4 rounded-full bg-gray-100">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                className="h-8 w-8 text-gray-400"
+              >
+                <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+                <circle cx="9" cy="9" r="2" />
+                <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+              </svg>
+            </div>
+            <h3 className="text-lg font-medium text-gray-900 mb-2">暂无图片</h3>
+            <p className="text-gray-500 mb-4 max-w-sm">
+              还没有上传任何图片，点击右上角的上传按钮开始使用吧
+            </p>
+            <Link
+              to="/"
+              className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition-colors"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                className="h-4 w-4"
+              >
+                <path
+                  d="M12 16V4"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <path
+                  d="M8 8l4-4 4 4"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <path
+                  d="M3 15v4a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-4"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              上传图片
+            </Link>
+          </div>
+        ) : (
+          <Masonry
+            breakpointCols={{
+              default: 6,
+              1536: 6,
+              1280: 5,
+              1024: 4,
+              768: 3,
+              640: 2,
+              350: 1,
+            }}
+            className="flex w-auto -ml-5"
+            columnClassName="pl-5 bg-clip-padding"
+          >
+            {items.map((item) => (
+              <ImageItem key={item.id} item={item} onCopyLink={() => copyLink(item.id)} />
+            ))}
+          </Masonry>
+        )}
+
+        {/* 加载更多指示器 */}
+        {hasMore && (
+          <div className="mt-8">
+            <div ref={sentinelRef} className="h-px w-full" />
+            {loading && (
+              <div className="flex items-center justify-center py-8">
+                <React.Fragment>
+                  <div
+                      className="h-4 w-4 border-2 border-gray-300 border-t-gray-500 rounded-full animate-spin"
+                      aria-label="loading more"
+                    />
+                    <span className="text-sm">加载更多...</span>
+                </React.Fragment>
+              </div>
+            )}
+          </div>
+        )}
+        
+        {/* 没有更多数据时的提示 */}
+        {!hasMore && items.length > 0 && (
+          <div className="mt-8 text-center">
+            <div className="text-sm text-gray-400">已加载全部内容</div>
+          </div>
+        )}
       </main>
     </div>
   );

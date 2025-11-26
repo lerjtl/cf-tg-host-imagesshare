@@ -110,15 +110,15 @@ export async function onRequestPost(context) {
                     console.log('Sending request to:', url);
                     try {
                         const data = await postToTelegram(url, fd, 'sendMediaGroup', 60000, 2);
-                        const ids = getFileIdsFromGroup(data); // Note: getFileIdsFromGroup doesn't return thumbnail IDs yet
+                        const ids = getFileIdsFromGroup(data); // Note: getFileIdsFromGroup now returns thumbnail IDs
                         if (!ids.length) throw new Error('Failed to get file IDs from media group');
                         for (let i = 0; i < ids.length; i++) {
-                            const id = ids[i];
+                            const idObj = ids[i];
                             const ext = batch[i]?.ext || 'jpg';
                             const mime = batch[i]?.mime || '';
-                            results.push({ src: `/file/${id}.${ext}` });
-                            await putMeta(id, ext, mime, env);
-                            console.log('Media group item uploaded. File ID:', id, 'Metadata saved.');
+                            results.push({ src: `/file/${idObj.file_id}.${ext}` });
+                            await putMeta(idObj.file_id, ext, mime, env, idObj.thumbnail_id);
+                            console.log('Media group item uploaded. File ID:', idObj.file_id, 'Thumbnail ID:', idObj.thumbnail_id, 'Metadata saved.');
                         }
                     } catch (e) {
                         const msg = String(e && e.message ? e.message : e);
@@ -394,22 +394,16 @@ function getFileId(response) {
     if (result.document) {
         fileId = result.document.file_id;
         console.log('getFileId: Found document file_id:', fileId);
-        if (result.document.thumbnail && Array.isArray(result.document.thumbnail) && result.document.thumbnail.length) {
-            const bestThumbnail = result.document.thumbnail.reduce((prev, current) =>
-                (prev.file_size > current.file_size) ? prev : current
-            );
-            thumbnailId = bestThumbnail.file_id;
+        if (result.document.thumbnail) {
+            thumbnailId = result.document.thumbnail.file_id;
             console.log('getFileId: Found document thumbnail_id:', thumbnailId);
         }
     }
     if (result.video) {
         fileId = result.video.file_id;
         console.log('getFileId: Found video file_id:', fileId);
-        if (result.video.thumbnail && Array.isArray(result.video.thumbnail) && result.video.thumbnail.length) {
-            const bestThumbnail = result.video.thumbnail.reduce((prev, current) =>
-                (prev.file_size > current.file_size) ? prev : current
-            );
-            thumbnailId = bestThumbnail.file_id;
+        if (result.video.thumbnail) {
+            thumbnailId = result.video.thumbnail.file_id;
             console.log('getFileId: Found video thumbnail_id:', thumbnailId);
         }
     }
@@ -431,18 +425,28 @@ function getFileIdsFromGroup(response) {
     const ids = [];
     for (const msg of response.result) {
         let fileId = null;
+        let thumbnailId = null;
         if (msg.photo && Array.isArray(msg.photo) && msg.photo.length) {
             const best = msg.photo.reduce((prev, current) => (prev.file_size > current.file_size) ? prev : current);
             fileId = best.file_id;
+            // For photos, Telegram might not return a distinct thumbnail. Use the smallest photo as thumbnail if needed, or null.
+            const smallestPhoto = msg.photo.reduce((prev, current) => (prev.file_size < current.file_size) ? prev : current);
+            thumbnailId = smallestPhoto.file_id; // Using smallest photo as thumbnail ID
         } else if (msg.video && msg.video.file_id) {
             fileId = msg.video.file_id;
+            if (msg.video.thumbnail) {
+                thumbnailId = msg.video.thumbnail.file_id;
+            }
         } else if (msg.document && msg.document.file_id) {
             fileId = msg.document.file_id;
+            if (msg.document.thumbnail) {
+                thumbnailId = msg.document.thumbnail.file_id;
+            }
         } else if (msg.sticker && msg.sticker.file_id) {
             fileId = msg.sticker.file_id;
         }
         if (fileId) {
-            ids.push(fileId);
+            ids.push({ file_id: fileId, thumbnail_id: thumbnailId });
         }
     }
     return ids;
