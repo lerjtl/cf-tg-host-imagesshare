@@ -15,10 +15,9 @@ export default function Home() {
     file: File
     preview: string
     progress: number
+    target: number // 将可选的 'target?' 改为强制的 'target'
     status: 'idle' | 'uploading' | 'done' | 'error'
-    xhr?: XMLHttpRequest
     timer?: number
-    target?: number
     error?: string
     resultUrl?: string
   }
@@ -120,7 +119,7 @@ export default function Home() {
             prev.map((it) => {
               const currentTarget = it.target !== undefined ? it.target : 0; // Provide a default value for target
               return it.id === item.id
-                ? { ...it, progress: Math.min(it.progress + 1, currentTarget) }
+                ? { ...it, progress: Math.min(it.progress + 1, it.target) }
                 : it;
             })
           );
@@ -179,7 +178,7 @@ export default function Home() {
       file: f,
       preview: URL.createObjectURL(f),
       progress: 0,
-      target: 0, // 确保 target 总是被初始化为 number
+      target: 0, // 确保 target 在这里被初始化
       status: 'idle',
     }))
     setQueue(prev => [...prev, ...items])
