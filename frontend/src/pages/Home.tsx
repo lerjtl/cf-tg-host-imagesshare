@@ -179,6 +179,7 @@ export default function Home() {
       file: f,
       preview: URL.createObjectURL(f),
       progress: 0,
+      target: 0, // 确保 target 总是被初始化为 number
       status: 'idle',
     }))
     setQueue(prev => [...prev, ...items])
