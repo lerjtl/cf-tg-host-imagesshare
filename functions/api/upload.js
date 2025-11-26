@@ -382,16 +382,18 @@ function getFileId(response) {
     const result = response.result;
     console.log('getFileId: Processing result:', JSON.stringify(result, null, 2));
     
+    let fileId = null;
+    let thumbnailId = null;
+
     if (result.photo) {
-        const fileId = result.photo.reduce((prev, current) =>
+        fileId = result.photo.reduce((prev, current) =>
             (prev.file_size > current.file_size) ? prev : current
         ).file_id;
         console.log('getFileId: Found photo file_id:', fileId);
-        return { file_id: fileId, thumbnail_id: null };
     }
     if (result.document) {
-        console.log('getFileId: Found document file_id:', result.document.file_id);
-        let thumbnailId = null;
+        fileId = result.document.file_id;
+        console.log('getFileId: Found document file_id:', fileId);
         if (result.document.thumbnail && Array.isArray(result.document.thumbnail) && result.document.thumbnail.length) {
             const bestThumbnail = result.document.thumbnail.reduce((prev, current) =>
                 (prev.file_size > current.file_size) ? prev : current
@@ -399,11 +401,10 @@ function getFileId(response) {
             thumbnailId = bestThumbnail.file_id;
             console.log('getFileId: Found document thumbnail_id:', thumbnailId);
         }
-        return { file_id: result.document.file_id, thumbnail_id: thumbnailId };
     }
     if (result.video) {
-        console.log('getFileId: Found video file_id:', result.video.file_id);
-        let thumbnailId = null;
+        fileId = result.video.file_id;
+        console.log('getFileId: Found video file_id:', fileId);
         if (result.video.thumbnail && Array.isArray(result.video.thumbnail) && result.video.thumbnail.length) {
             const bestThumbnail = result.video.thumbnail.reduce((prev, current) =>
                 (prev.file_size > current.file_size) ? prev : current
@@ -411,15 +412,17 @@ function getFileId(response) {
             thumbnailId = bestThumbnail.file_id;
             console.log('getFileId: Found video thumbnail_id:', thumbnailId);
         }
-        return { file_id: result.video.file_id, thumbnail_id: thumbnailId };
     }
     if (result.sticker) {
-        console.log('getFileId: Found sticker file_id:', result.sticker.file_id);
-        return { file_id: result.sticker.file_id, thumbnail_id: null };
+        fileId = result.sticker.file_id;
+        console.log('getFileId: Found sticker file_id:', fileId);
     }
 
-    console.error('getFileId: No file_id found in result. Available keys:', Object.keys(result));
-    return null;
+    if (!fileId) {
+        console.error('getFileId: No file_id found in result. Available keys:', Object.keys(result));
+        return null;
+    }
+    return { file_id: fileId, thumbnail_id: thumbnailId };
 }
 
 // 从 sendMediaGroup 返回结果中提取每个消息的文件 id（保持顺序）
@@ -427,15 +430,19 @@ function getFileIdsFromGroup(response) {
     if (!response.ok || !Array.isArray(response.result)) return [];
     const ids = [];
     for (const msg of response.result) {
+        let fileId = null;
         if (msg.photo && Array.isArray(msg.photo) && msg.photo.length) {
             const best = msg.photo.reduce((prev, current) => (prev.file_size > current.file_size) ? prev : current);
-            ids.push(best.file_id);
+            fileId = best.file_id;
         } else if (msg.video && msg.video.file_id) {
-            ids.push(msg.video.file_id);
+            fileId = msg.video.file_id;
         } else if (msg.document && msg.document.file_id) {
-            ids.push(msg.document.file_id);
+            fileId = msg.document.file_id;
         } else if (msg.sticker && msg.sticker.file_id) {
-            ids.push(msg.sticker.file_id);
+            fileId = msg.sticker.file_id;
+        }
+        if (fileId) {
+            ids.push(fileId);
         }
     }
     return ids;
