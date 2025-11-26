@@ -76,58 +76,9 @@ export function uploadWithProgress(file: File, onProgress: (p: UploadProgress) =
         xhr.onload = () => {
           if (xhr.status >= 200 && xhr.status < 300) {
             uploadedBytes += chunk.size;
+            // Update progress again after a chunk is completely uploaded
+            const percent = file.size ? Math.round((uploadedBytes / file.size) * 100) : 0;
+            onProgress({ loaded: uploadedBytes, total: file.size, percent });
             resolveChunk();
           } else {
-            rejectChunk(new Error(xhr.responseText || `Chunk ${i} upload failed`));
-          }
-        };
-
-        xhr.onerror = () => rejectChunk(new Error(`Chunk ${i} network error`));
-        xhr.send(chunk);
-      });
-
-      try {
-        await chunkUploadPromise;
-      } catch (error) {
-        reject(error);
-        return;
-      }
-    }
-
-    // After all chunks are uploaded, the server should have returned the final response for the last chunk
-    // So we don't need a separate final request here.
-    // The last chunk's response will contain the result of the merged file upload.
-    // However, the current implementation in onRequestPut returns success for the last chunk and then initiates Telegram upload.
-    // We need to wait for the Telegram upload to complete.
-    // For simplicity, I will assume the last chunk upload response will contain the final result for now.
-    // In a real-world scenario, a separate /api/upload/complete endpoint might be needed.
-    // For now, let's just make a dummy request to /api/upload to trigger the final merge and get the result.
-    const finalRes = await fetch('/api/upload', {
-      method: 'POST',
-      headers: {
-        'X-File-ID': fileId,
-        'X-File-Name': file.name,
-        'X-File-Size': String(file.size),
-        'X-Total-Chunks': String(totalChunks),
-        'X-File-Mime-Type': file.type, // 重新添加 MIME type
-        'X-Final-Upload': 'true', // Indicate this is the finalization request
-      },
-      credentials: 'include',
-    });
-    if (!finalRes.ok) {
-      // Check for specific error message for file size limit
-      const errorText = await finalRes.text();
-      try {
-        const errorJson = JSON.parse(errorText);
-        if (errorJson.error === 'File size exceeds Telegram API direct upload limit (50MB)') {
-          reject(new Error(errorJson.error));
-          return;
-        }
-      } catch (e) {
-        // Not a JSON error, proceed with generic error
-      }
-      throw new Error(errorText || 'Final upload failed');
-    }
-    resolve(finalRes.json().catch(() => ({})));
-  });
-}
+            rejectChunk(new Error(xhr.responseText || `Chunk ${i} upload failed`

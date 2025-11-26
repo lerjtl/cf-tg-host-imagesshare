@@ -25,7 +25,9 @@ export async function onRequestPost(context) {
                 }
             }
 
+            console.log('Starting to merge ArrayBuffers for file:', fileName, '(', totalChunks, 'chunks)');
             const mergedBuffer = await mergeArrayBuffers(fileParts);
+            console.log('Merged ArrayBuffers. Merged file size:', mergedBuffer.byteLength, 'bytes');
             // 确保 File 构造函数接收有效的 MIME 类型
             const mimeTypeFromHeader = request.headers.get('X-File-Mime-Type') || 'application/octet-stream';
             const file = new File([mergedBuffer], fileName, { type: mimeTypeFromHeader });
