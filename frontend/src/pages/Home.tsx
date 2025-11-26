@@ -122,7 +122,7 @@ export default function Home() {
           );
         }, 100);
 
-        const result = await uploadWithProgress(item.file, updateProgress);
+        const result = await uploadWithProgress(item.file as File, updateProgress);
 
         const urls: string[] = Array.isArray(result?.urls)
           ? result.urls
