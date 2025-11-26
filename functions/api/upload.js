@@ -26,7 +26,9 @@ export async function onRequestPost(context) {
             }
 
             const mergedBuffer = await mergeArrayBuffers(fileParts);
-            const file = new File([mergedBuffer], fileName, { type: request.headers.get('X-File-Mime-Type') || getMimeTypeFromFileName(fileName) || 'application/octet-stream' });
+            // 确保 File 构造函数接收有效的 MIME 类型
+            const mimeTypeFromHeader = request.headers.get('X-File-Mime-Type') || 'application/octet-stream';
+            const file = new File([mergedBuffer], fileName, { type: mimeTypeFromHeader });
 
             const ext = (fileName.includes('.') ? fileName.split('.').pop() : '').toLowerCase();
             const mime = file.type || '';
@@ -392,7 +394,8 @@ export async function onRequestPut(context) {
             }
 
             // 将合并后的文件作为完整的 Blob 对象处理
-            const file = new File([mergedBuffer], fileName, { type: request.headers.get('X-File-Mime-Type') || getMimeTypeFromFileName(fileName) || 'application/octet-stream' });
+            const mimeTypeFromHeaderPut = request.headers.get('X-File-Mime-Type') || 'application/octet-stream';
+            const file = new File([mergedBuffer], fileName, { type: mimeTypeFromHeaderPut });
             
             const ext = (fileName.includes('.') ? fileName.split('.').pop() : '').toLowerCase();
             const mime = file.type || '';

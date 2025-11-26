@@ -109,6 +109,7 @@ export function uploadWithProgress(file: File, onProgress: (p: UploadProgress) =
         'X-File-Name': file.name,
         'X-File-Size': String(file.size),
         'X-Total-Chunks': String(totalChunks),
+        'X-File-Mime-Type': file.type, // 重新添加 MIME type
         'X-Final-Upload': 'true', // Indicate this is the finalization request
       },
       credentials: 'include',
